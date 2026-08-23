@@ -16,43 +16,40 @@
  *    and verified monotonic on 0..1 (engine.test.mjs §7).
  */
 
-import { TYPES, simulate, assist, brighten, linearToSrgb, srgbToLinear } from "./engine.js";
+import { TYPES, simulate, assist, linearToSrgb, srgbToLinear } from "./engine.js";
 import { createRenderer, openCamera, MODE } from "./render.js";
-import { nameColor, toHex, averagePatch, makeSmoother } from "./naming.js";
+import { nameColor, averagePatch, makeSmoother } from "./naming.js";
 import * as Profiles from "./profiles.js";
 import { displayPolicy } from "./profiles.js";
 
 const $ = (id) => document.getElementById(id);
 
-const EV = [0.7, 1, 1.35, 1.8];
-const EV_LABEL = ["EV −1", "EV 0", "EV +1", "EV +2"];
-const ACC = ["#f5a623", "#8ad14b", "#2f9bf0", "#ffffff"];
+const ACC = ["#f5a623", "#2f9bf0", "#ffffff"];
 const BG = ["#f5a623", "#2f9bf0", "#f2e327", "#1b2a6b", "#d2b48c", "#22c8d8"];
 
-// Mode order is the brief's: correct their vision first, then show what they
-// see, then the untouched reference — with "extra" sitting next to the default
-// because they are the two corrections.
+// Three modes, named by whose eyes they belong to.
 //
-// The default is NATURAL, not maximum separation. Z reported that orange looked
-// purple, which was exactly right: the old default had no hue constraint. It
-// now keeps an orange orange (3 degrees mean hue shift, against 35) while still
-// separating confusable colours. See SCIENCE.md §5 for why no correction can
-// make him actually PERCEIVE the true colour.
+//   world  — the picture altered so THIS person's eyes land as close to
+//            everyone else's as a screen can manage. The default.
+//   Z      — what their eyes actually receive, for showing other people.
+//   camera — the untouched sensor feed.
+//
+// The engine also carries a zero-hue-error brightness mode and a false-colour
+// mode; both are tested and reachable, just not on screen. Three chips is the
+// whole interface on purpose.
 const MODES = [
-  { key: MODE.ASSIST,   name: (n) => `${n}'s mode`,      sub: "Colours stay true, and the confusing ones move apart." },
-  { key: MODE.BRIGHT,   name: () => "True colour",       sub: "No colour is changed at all. Confusing ones go lighter or darker instead." },
-  { key: MODE.SIMULATE, name: (n) => `How ${n} sees it`, sub: "What their eyes actually receive — show this to other people." },
-  { key: MODE.NORMAL,   name: () => "Standard",          sub: "Untouched camera. The reference frame." },
+  { key: MODE.ASSIST,   icon: "world",
+    name: () => "The world's colours",
+    sub:  "Changed so your eyes see them closer to how everyone else does." },
+  { key: MODE.SIMULATE, icon: "who",
+    name: (n) => `How ${n} sees it`,
+    sub:  "What their eyes actually receive. Show this to other people." },
+  { key: MODE.NORMAL,   icon: "camera",
+    name: () => "Camera",
+    sub:  "The picture untouched." },
 ];
 
-// The false-colour mode lives in the sheet, not on a chip. Once gamut mapping
-// stopped clipping, it beat the default on only half the deficiency types,
-// while costing 3-9x the hue error — so it is a tool for "are these two the
-// same?", not something to leave a child looking through.
-const FALSE_COLOUR = { key: MODE.BOOST, name: () => "Extra boost",
-  sub: "Colours are deliberately wrong so two similar ones cannot hide." };
-
-const S = { mode: 0, ev: 1, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, falseColour: false };
+const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false };
 let state = Profiles.load();
 let me = Profiles.active(state);
 
@@ -66,9 +63,11 @@ let renderer = null;
 // ---------------------------------------------------------------------------
 function exposure() {
   const policy = displayPolicy(me);
+  // Auto-exposure already handles the picture; the only reason to touch
+  // brightness here is the photophobic profiles, where bright screens hurt.
   // Photophobic profiles dim rather than brighten — bright screens genuinely
   // hurt in achromatopsia and blue cone monochromacy. SCIENCE.md §2.
-  return EV[S.ev] * (policy.brightness === "reduce" ? 0.55 : 1);
+  return policy.brightness === "reduce" ? 0.55 : 1;
 }
 
 function applyProfile() {
@@ -125,17 +124,11 @@ function paintReadout() {
   const [r, g, b] = S.rgb;
   $("swatch").style.background = `rgb(${r},${g},${b})`;
   $("cname").textContent = nameColor(r, g, b);
-  $("chex").textContent = toHex(r, g, b).toUpperCase();
 
   // Each mode chip previews the sampled colour under that mode — the design's
   // nicest detail, and it makes the modes self-explanatory without words.
   const lin = [r, g, b].map((v) => srgbToLinear(v / 255));
-  const preview = [
-    assist(lin, me, me.boost, "natural"),
-    brighten(lin, me, me.boost),
-    simulate(lin, me),
-    lin,
-  ];
+  const preview = [assist(lin, me, me.boost, "natural"), simulate(lin, me), lin];
   document.querySelectorAll(".mode").forEach((el, i) => {
     el.querySelector(".chip").style.background = toRGBString(preview[i]);
   });
@@ -146,14 +139,12 @@ function paintReadout() {
 // ---------------------------------------------------------------------------
 function paintChrome() {
   const initial = (me.name || "Z").slice(0, 2).toUpperCase();
-  $("avatar").textContent = initial;
   $("avatarBig").textContent = initial;
-  $("ico0").textContent = initial;
-  $("avatar").style.background = me.avatarColor || BG[0];
+  $("icoZ").textContent = initial;
   $("avatarBig").style.background = me.avatarColor || BG[0];
-  $("modeName").textContent = S.falseColour ? FALSE_COLOUR.name() : MODES[S.mode].name(initial);
+  $("modeName").textContent = MODES[S.mode].name(initial);
   document.querySelectorAll(".mode").forEach((el, i) =>
-    el.setAttribute("aria-pressed", String(i === S.mode && !S.falseColour)));
+    el.setAttribute("aria-pressed", String(i === S.mode)));
   $("gl").style.transform = `scale(${S.zoom.toFixed(3)})`;
 
   const t = TYPES[me.type];
@@ -165,20 +156,9 @@ function paintChrome() {
 
 function setMode(i) {
   S.mode = Math.max(0, Math.min(MODES.length - 1, i));
-  S.falseColour = false;
-  $("falseBtn")?.setAttribute("aria-pressed", "false");
   renderer.setMode(MODES[S.mode].key);
   paintChrome();
   flash(MODES[S.mode].sub, 1800);
-}
-
-function toggleFalseColour() {
-  S.falseColour = !S.falseColour;
-  $("falseBtn").setAttribute("aria-pressed", String(S.falseColour));
-  $("falseBtn").textContent = S.falseColour ? "False colour on" : "Turn on false colour";
-  renderer.setMode(S.falseColour ? FALSE_COLOUR.key : MODES[S.mode].key);
-  paintChrome();
-  flash(S.falseColour ? FALSE_COLOUR.sub : MODES[S.mode].sub, 1800);
 }
 
 let toastTimer = 0;
@@ -232,10 +212,6 @@ const endDrag = () => {
   if (!q) return;
   if (q.ax === "x") {
     if (Math.abs(q.drag || 0) > 55) setMode(S.mode + (q.drag < 0 ? 1 : -1));
-  } else if (!q.ax) {
-    S.ev = (S.ev + 1) % 4;
-    renderer.setExposure(exposure());
-    flash(EV_LABEL[S.ev]);
   }
 };
 app.addEventListener("pointerup", endDrag);
@@ -258,10 +234,8 @@ const openSheet = (on) => {
   $("scrim").classList.toggle("on", on);
 };
 $("gear").addEventListener("click", () => openSheet(true));
-$("avatar").addEventListener("click", () => openSheet(true));
 $("scrim").addEventListener("click", () => openSheet(false));
 $("doneBtn").addEventListener("click", () => openSheet(false));
-$("falseBtn").addEventListener("click", toggleFalseColour);
 
 $("letter").addEventListener("input", (e) =>
   persist({ name: (e.target.value || "Z").toUpperCase().slice(0, 2) }));
