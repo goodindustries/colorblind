@@ -6,7 +6,7 @@
   "description": "Real-time colour-vision assist camera",
   "license": "MIT",
   "scripts": {
-    "test": "node src/engine.test.mjs && node src/naming.test.mjs && node src/render.test.mjs",
+    "test": "node src/engine.test.mjs && node src/naming.test.mjs && node src/render.test.mjs && node src/correct.test.mjs && node src/calibrate.test.mjs",
     "optimize": "node src/optimize.mjs"
   }
 }

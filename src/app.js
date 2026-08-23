@@ -20,6 +20,7 @@ import { TYPES, simulate, assist, linearToSrgb, srgbToLinear } from "./engine.js
 import { createRenderer, openCamera, MODE } from "./render.js";
 import { nameColor, averagePatch, makeSmoother } from "./naming.js";
 import * as Profiles from "./profiles.js";
+import { runSession, drawReward, makeContext, toEngineProfile, reliability } from "./calibrate.ui.js";
 import { displayPolicy } from "./profiles.js";
 
 const $ = (id) => document.getElementById(id);
@@ -38,7 +39,7 @@ const BG = ["#f5a623", "#2f9bf0", "#f2e327", "#1b2a6b", "#d2b48c", "#22c8d8"];
 // mode; both are tested and reachable, just not on screen. Three chips is the
 // whole interface on purpose.
 const MODES = [
-  { key: MODE.ASSIST,   icon: "world",
+  { key: MODE.NATURAL,  icon: "world",
     name: () => "The world's colours",
     sub:  "Changed so your eyes see them closer to how everyone else does." },
   { key: MODE.SIMULATE, icon: "who",
@@ -334,6 +335,81 @@ $("gateBtn").addEventListener("click", () => startCamera(true));
 $("camBtn").addEventListener("click", async () => {
   if (await startCamera(true)) openSheet(false);
 });
+
+// ---------------------------------------------------------------------------
+// Calibration
+//
+// A label like "strong deutan" is a bucket; this is a measurement. The result
+// replaces the profile's type and severity, and the correction updates live.
+// ---------------------------------------------------------------------------
+let calRunning = false;
+
+async function calibrate() {
+  if (calRunning) return;
+  calRunning = true;
+  const cv = $("calCanvas");
+  $("cal").classList.add("on");
+  openSheet(false);
+  const fit = () => {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(cv.clientWidth * dpr);
+    cv.height = Math.round(cv.clientHeight * dpr);
+  };
+  fit();
+  $("calMsg").textContent = "Tap the fish. If there is no fish, wait.";
+  $("calFill").style.width = "0%";
+
+  let stopped = false;
+  $("calQuit").onclick = () => { stopped = true; $("cal").classList.remove("on"); calRunning = false; };
+
+  const result = await runSession(cv, {
+    onProgress: (done, total) => {
+      $("calFill").style.width = Math.min(100, (done / total) * 100).toFixed(1) + "%";
+      $("calMsg").textContent = `Tap the fish. ${done} of about ${total}`;
+    },
+  });
+  if (stopped) return;
+
+  // A run full of false alarms on the no-fish trials is guessing, and writing
+  // it into the profile would be worse than leaving the old value alone.
+  const trust = reliability(result);
+  if (!trust.trustworthy) {
+    $("calFill").style.width = "100%";
+    $("calMsg").textContent =
+      `Too many taps when there was no fish (${trust.falseAlarms} of ${trust.catches}). Nothing saved — try again slower.`;
+    $("calQuit").textContent = "Close";
+    $("calQuit").onclick = () => {
+      $("cal").classList.remove("on");
+      $("calQuit").textContent = "Stop";
+      calRunning = false;
+    };
+    return;
+  }
+
+  const patch = toEngineProfile(result);
+  persist(patch);
+  $("type").value = patch.type;
+  $("sev").value = patch.severity;
+  $("sevLabel").textContent = patch.severity.toFixed(2);
+
+  // The reward is drawn from colours THIS profile can separate — it
+  // demonstrates the point rather than decorating.
+  const { ctx, wide } = makeContext(cv);
+  const scales = drawReward(cv, ctx, { axis: result.axis, severity: result.severity }, wide);
+  $("calFill").style.width = "100%";
+  $("calMsg").textContent = result.axis
+    ? `${TYPES[patch.type].label}, strength ${patch.severity.toFixed(2)} — ${scales} colours you can tell apart`
+    : `Nothing unusual found — ${scales} colours you can tell apart`;
+  $("calQuit").textContent = "Done";
+  $("calQuit").onclick = () => {
+    $("cal").classList.remove("on");
+    $("calQuit").textContent = "Stop";
+    calRunning = false;
+    flash(result.axis ? `Measured: ${TYPES[patch.type].label}` : "Measured: nothing unusual", 2200);
+  };
+}
+
+$("calBtn").addEventListener("click", calibrate);
 
 $("save").addEventListener("click", () => {
   gl.toBlob((b) => {

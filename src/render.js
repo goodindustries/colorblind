@@ -8,9 +8,10 @@
  * drift away from the CPU path the tests cover.
  */
 
-import { TYPES, machadoMatrix, correctionFor, brettelParams, HUE_CAP_DEG, CHROMA_FLOOR } from "./engine.js";
+import { TYPES, machadoMatrix, brettelParams } from "./engine.js";
+import { lostAxis, effectiveSeverity, SURVIVING_AXIS, DEFAULTS } from "./correct.js";
 
-export const MODE = { NORMAL: 0, ASSIST: 1, SIMULATE: 2, BOOST: 3, BRIGHT: 4 };
+export const MODE = { NORMAL: 0, NATURAL: 1, SIMULATE: 2, SPLIT: 3, ACHROMATIC: 4, PULSE: 5 };
 
 const VERT = `
 attribute vec2 aPos;
@@ -32,6 +33,7 @@ uniform sampler2D uTex;
 uniform int uMode;
 uniform float uBoost;
 uniform float uDim;
+uniform float uTime;
 
 const float PI = 3.14159265;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -66,6 +68,12 @@ vec3 fromLab(vec3 lab){
   return XYZ2RGB * (n * WHITE);
 }
 float chromaOf(vec3 lab){ return length(lab.yz); }
+
+// Set luminance without touching chromaticity.
+vec3 withLuma(vec3 c, float Y){
+  float y0 = dot(c, LUMA);
+  return (y0 < 1e-6) ? vec3(Y) : c * (Y / y0);
+}
 
 // Scale chroma toward the pixel's own luminance. Clipping each channel
 // separately rotates hue — that is exactly how an orange became purple.
@@ -130,84 +138,114 @@ function simulateGLSL(profile) {
   }`;
 }
 
-export function buildFragment(profile) {
-  const nat = correctionFor(profile.type, "natural");
-  const max = correctionFor(profile.type, "max");
-  const passthrough = !nat;
+/**
+ * GLSL transcription of src/correct.js. Every constant is read from that
+ * module, so the shader cannot drift from the model the tests cover.
+ *
+ * `profile` here is the engine's { type, severity }; the correction model
+ * speaks { axis, severity, compensation }.
+ */
+const AXIS_OF = {
+  protanomaly: "protan", protanopia: "protan",
+  deuteranomaly: "deutan", deuteranopia: "deutan",
+  tritanomaly: "tritan", tritanopia: "tritan",
+};
 
-  // Monochromacy has no axis to move information onto. A passthrough is the
-  // honest answer; SCIENCE.md covers what helps instead.
-  if (passthrough) {
+/** Simulation at a given severity, emitted under `name`. */
+function simulateAs(name, type, severity) {
+  const t = TYPES[type] || TYPES.normal;
+  if (t.model === "none" || severity <= 0) return `vec3 ${name}(vec3 lin){ return lin; }`;
+  if (t.model === "monochrome")
+    return `vec3 ${name}(vec3 lin){ return mix(lin, vec3(dot(lin, ${glslVec(t.weights)})), ${severity.toFixed(4)}); }`;
+  if (t.model === "machado")
+    return `vec3 ${name}(vec3 lin){ return ${glslMat(machadoMatrix(t.family, severity))} * lin; }`;
+  const B = brettelParams(t.brettel);
+  return `vec3 ${name}(vec3 lin){
+  vec3 p = (dot(lin, ${glslVec(B.n)}) >= 0.0) ? (${glslMat(B.m1)} * lin) : (${glslMat(B.m2)} * lin);
+  return mix(lin, p, ${severity.toFixed(4)});
+}`;
+}
+
+export function buildFragment(profile) {
+  const axis = AXIS_OF[profile.type];
+  const eyeSev = profile.severity == null ? 1 : profile.severity;
+
+  // Monochromacy has no axis to relocate information onto.
+  if (!axis) {
     return `${HEAD}
-${simulateGLSL(profile)}
+${simulateAs("simulateEye", profile.type, eyeSev)}
 void main(){
   vec3 lin = toLinear(texture2D(uTex, vUV).rgb);
-  vec3 outv = (uMode == 2) ? simulate(lin) : lin;
-  gl_FragColor = vec4(toSRGB(outv) * uDim, 1.0);
+  gl_FragColor = vec4(toSRGB((uMode == 2) ? simulateEye(lin) : lin) * uDim, 1.0);
 }`;
   }
 
-  const PICK = glslVec(max.pick);
-  const target = (name, c) => `
-vec3 ${name}(vec3 lin, float boost){
-  vec3 sim = simulate(lin);
-  float d = dot(lin - sim, ${PICK});
-  float y = dot(lin, LUMA);
-  float k = 1.0 + ${c.sat.toFixed(4)} * boost;
-  vec3 t = lin + d * ${glslVec(c.push)} * boost;
-  return vec3(y) + (t - vec3(y)) * k;
-}`;
-
-  // Back the correction off until enough chroma survives the gamut map.
-  // Without this, strongly saturated colours arrive GREY — 88 of 494 random
-  // colours did, which is a worse artefact than the hue rotation it replaced.
-  // Most pixels skip the loop entirely.
-  const solve = (name, raw, bound) => `
-vec3 ${name}(vec3 lin){
-  vec3 full = mapToGamut(${raw}(lin, uBoost));
-  float c0 = chromaOf(toLab(lin));
-  vec3 best = full;
-  if (c0 >= 4.0 && chromaOf(toLab(full)) < ${CHROMA_FLOOR.toFixed(3)} * c0) {
-    float lo = 0.0, hi = 1.0;
-    for (int i = 0; i < 6; i++) {
-      float mid = (lo + hi) * 0.5;
-      vec3 o = mapToGamut(${raw}(lin, uBoost * mid));
-      if (chromaOf(toLab(o)) >= ${CHROMA_FLOOR.toFixed(3)} * c0) { lo = mid; best = o; }
-      else hi = mid;
-    }
-  }
-  return ${bound ? `guardHue(best, lin, ${HUE_CAP_DEG.toFixed(1)})` : "best"};
-}`;
+  const cprof = { axis, severity: eyeSev, compensation: profile.compensation };
+  const s = effectiveSeverity(cprof);
+  const k = 0.35 + 0.65 * s;                        // correct.js decompose()
+  const dichromat = axis === "protan" ? "protanopia" : axis === "deutan" ? "deuteranopia" : "tritanopia";
+  const shift = axis === "tritan"
+    ? [1,0,0.7, 0,1,0.7, 0,0,0]
+    : [0,0,0, 0.7,1,0, 0.7,0,1];
+  const P = DEFAULTS;
 
   return `${HEAD}
-${simulateGLSL(profile)}
-${target("rawNatural", nat)}
-${target("rawMax", max)}
-${solve("assistNatural", "rawNatural", true)}
-${solve("assistMax", "rawMax", false)}
+${simulateAs("simulateFull", dichromat, 1)}
+${simulateAs("simulateEye", profile.type, s)}
 
-// Brightness: the lost signal encoded purely as lighter/darker. Hue and
-// saturation are untouched, so hue error is exactly zero by construction.
-vec3 brighten(vec3 lin){
-  vec3 sim = simulate(lin);
-  float d = dot(lin - sim, ${PICK});
+const vec3 LOST = ${glslVec(lostAxis({ axis, severity: 1 }))};
+const vec3 SURV = ${glslVec(SURVIVING_AXIS[axis])};
+
+// correct.js decompose(): the loss this eye actually carries.
+vec3 errOf(vec3 lin){ return (lin - simulateFull(lin)) * ${k.toFixed(6)}; }
+
+vec3 natural(vec3 lin){
+  vec3 err = errOf(lin);
+  float d = dot(err, LOST);
+  float Y = dot(lin, LUMA);
+  vec3 o = lin + err * uBoost * 0.8 + SURV * d * uBoost * 0.6;
+  o = withLuma(o, Y);
+  o = vec3(Y) + (o - vec3(Y)) * (1.0 + 0.35 * uBoost);
+  return guardHue(mapToGamut(o), lin, ${P.hueCapDeg.toFixed(1)});
+}
+
+// Hue and chroma untouched; the lost signal becomes lighter/darker only.
+vec3 achromatic(vec3 lin){
+  float d = dot(errOf(lin), LOST);
   float Y = dot(lin, LUMA);
   float f = clamp(pow(2.0, d * 4.0 * uBoost), 0.5, 2.0);
   float yMax = Y / max(max(lin.r, max(lin.g, lin.b)), 1e-6);
   float Y2 = max(0.02, Y * f);
   if (Y2 > Y) Y2 = min(Y2, max(Y, yMax * 0.995));
-  vec3 scaled = (Y < 1e-6) ? vec3(Y2) : lin * (Y2 / Y);
-  return mapToGamut(scaled);
+  return mapToGamut(withLuma(lin, Y2));
+}
+
+// Fidaner redistribution. Colours change on purpose; hue is not protected.
+vec3 split(vec3 lin){
+  vec3 sft = ${glslMat(shift)} * errOf(lin);
+  return mapToGamut(lin + sft * (0.5 + uBoost));
+}
+
+// Chroma-only breathing between natural and split, on pixels that actually
+// carry lost information. Luminance is pinned to natural's value, so the
+// screen never strobes; the rate is baked below the photosensitive band.
+vec3 pulse(vec3 lin){
+  vec3 a = natural(lin);
+  float gate = clamp((length(errOf(lin)) - ${P.pulseGate.toFixed(4)}) / ${P.pulseGate.toFixed(4)}, 0.0, 1.0);
+  if (gate <= 0.0) return a;
+  vec3 b = withLuma(split(lin), dot(a, LUMA));
+  float w = 0.5 * (1.0 - cos(2.0 * PI * ${Math.min(P.pulseHz, 1.5).toFixed(3)} * uTime)) * gate;
+  return guardHue(mapToGamut(mix(a, b, w)), lin, ${P.pulseHueCapDeg.toFixed(1)});
 }
 
 void main(){
   vec3 lin = toLinear(texture2D(uTex, vUV).rgb);
   vec3 outv = lin;
-  if (uMode == 1) outv = assistNatural(lin);
-  else if (uMode == 2) outv = simulate(lin);
-  else if (uMode == 3) outv = assistMax(lin);
-  else if (uMode == 4) outv = brighten(lin);
-  // Photophobic profiles dim instead of brightening — see displayPolicy().
+  if (uMode == 1) outv = natural(lin);
+  else if (uMode == 2) outv = simulateEye(lin);
+  else if (uMode == 3) outv = split(lin);
+  else if (uMode == 4) outv = achromatic(lin);
+  else if (uMode == 5) outv = pulse(lin);
   gl_FragColor = vec4(toSRGB(outv) * uDim, 1.0);
 }`;
 }
@@ -227,7 +265,8 @@ export function createRenderer(canvas) {
     }
   } catch { wideGamut = false; }
 
-  const state = { profile: null, mode: MODE.ASSIST, boost: 0.55, mirror: 0, dim: 1 };
+  const state = { profile: null, mode: MODE.NATURAL, boost: 0.55, mirror: 0, dim: 1 };
+  const t0 = performance.now();
   let prog = null, loc = null, video = null;
 
   const buf = gl.createBuffer();
@@ -262,7 +301,7 @@ export function createRenderer(canvas) {
     const a = gl.getAttribLocation(prog, "aPos");
     gl.enableVertexAttribArray(a);
     gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
-    loc = ["uTex","uMode","uBoost","uScale","uMirror","uDim"]
+    loc = ["uTex","uMode","uBoost","uScale","uMirror","uDim","uTime"]
       .reduce((o, n) => (o[n] = gl.getUniformLocation(prog, n), o), {});
     gl.uniform1i(loc.uTex, 0);
   }
@@ -306,6 +345,7 @@ export function createRenderer(canvas) {
       gl.uniform1i(loc.uMode, state.mode);
       gl.uniform1f(loc.uBoost, state.boost);
       gl.uniform1f(loc.uDim, state.dim);
+      gl.uniform1f(loc.uTime, (performance.now() - t0) / 1000);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       return true;
     },

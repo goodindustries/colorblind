@@ -114,6 +114,20 @@
   #camBtn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13)}
   #doneBtn{background:var(--accent);color:#141414}
   #note{font:400 11px/1.5 var(--sans);color:rgba(255,255,255,.3)}
+  #calBtn{padding:14px;border-radius:14px;background:rgba(255,255,255,.07);
+          border:1px solid rgba(255,255,255,.13);font:600 13px/1 var(--sans)}
+
+  /* ---- calibration game ---- */
+  #cal{position:absolute;inset:0;z-index:95;display:none;flex-direction:column;background:#000}
+  #cal.on{display:flex}
+  #calCanvas{flex:1;min-height:0;width:100%;display:block;touch-action:none}
+  #calBar{height:4px;background:rgba(255,255,255,.12);flex:none}
+  #calFill{height:100%;width:0;background:var(--accent);transition:width .2s}
+  #calFoot{flex:none;padding:16px 20px calc(20px + env(safe-area-inset-bottom));
+           display:flex;align-items:center;justify-content:space-between;gap:14px;background:#000}
+  #calMsg{font:500 14px/1.4 var(--sans);color:rgba(255,255,255,.75)}
+  #calQuit{padding:11px 16px;border-radius:12px;background:rgba(255,255,255,.08);
+           border:1px solid rgba(255,255,255,.14);font:600 13px/1 var(--sans);flex:none}
 
   /* ---- camera gate: only shown if the on-load request does not succeed ---- */
   #gate{position:absolute;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:28px;
@@ -173,6 +187,15 @@
     </div>
   </div>
 
+  <div id="cal" data-chrome>
+    <canvas id="calCanvas"></canvas>
+    <div id="calBar"><div id="calFill"></div></div>
+    <div id="calFoot">
+      <div id="calMsg">Tap the fish.</div>
+      <button id="calQuit">Stop</button>
+    </div>
+  </div>
+
   <div id="gate" data-chrome>
     <div id="gateCard">
       <div id="gateTitle">Turn on the camera</div>
@@ -217,6 +240,13 @@
       </div>
 
       <div class="rule"></div>
+
+      <div class="rule"></div>
+
+      <div class="row">
+        <div class="rowhead"><div class="label">MEASURE IT</div><div class="hint">~3 min, tap the fish</div></div>
+        <button id="calBtn">Start the fish game</button>
+      </div>
 
       <div class="rule"></div>
       <div id="note"></div>

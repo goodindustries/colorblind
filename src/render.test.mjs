@@ -3,7 +3,8 @@
 // constants match the engine's exactly (a drift here would silently make the
 // GPU disagree with the tested CPU maths).
 import { buildFragment } from "./render.js";
-import { TYPES, correctionFor, machadoMatrix } from "./engine.js";
+import { TYPES, machadoMatrix } from "./engine.js";
+import { lostAxis, SURVIVING_AXIS, DEFAULTS } from "./correct.js";
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = "") => c ? (pass++, console.log("  PASS  " + n))
@@ -17,33 +18,36 @@ for (const type of Object.keys(TYPES)) {
   const code = src.replace(/\/\/[^\n]*/g, "");
   const balanced = (code.match(/{/g) || []).length === (code.match(/}/g) || []).length;
   ok(`${type.padEnd(22)} well-formed`,
-     code.includes("void main()") && code.includes("vec3 simulate(") &&
-     (code.includes("vec3 assistNatural(") || code.includes("uMode == 2")) &&
+     code.includes("void main()") && code.includes("simulateEye") &&
      balanced && !code.includes("undefined") && !code.includes("NaN"));
 }
 
-console.log("\nGPU constants match the CPU engine exactly:");
+console.log("\nGPU constants come from correct.js, not a second copy:");
 for (const type of Object.keys(TYPES)) {
-  const nat = correctionFor(type, "natural"), max = correctionFor(type, "max");
-  if (!nat) continue;
+  const axis = { protanomaly:"protan", protanopia:"protan", deuteranomaly:"deutan",
+                 deuteranopia:"deutan", tritanomaly:"tritan", tritanopia:"tritan" }[type];
+  if (!axis) continue;
   const src = buildFragment({ type, severity: 1 });
-  const has = max.pick.every((v) => src.includes(v.toFixed(6))) &&
-              nat.push.every((v) => src.includes(v.toFixed(6))) &&
-              max.push.every((v) => src.includes(v.toFixed(6)));
-  ok(`${type.padEnd(22)} both corrections baked`, has);
-  ok(`${type.padEnd(22)} gamut + hue guard present`,
-     src.includes("mapToGamut") && src.includes("guardHue") && src.includes("brighten"));
-}
-for (const [type, fam] of [["protanomaly","protanomaly"],["deuteranomaly","deuteranomaly"]]) {
-  const src = buildFragment({ type, severity: 0.7 });
-  const m = machadoMatrix(fam, 0.7);
-  ok(`${type.padEnd(22)} severity-0.7 matrix baked`, m.every((v) => src.includes(v.toFixed(6))));
+  const want = lostAxis({ axis, severity: 1 });
+  ok(`${type.padEnd(22)} lost axis baked`, want.every((v) => src.includes(v.toFixed(6))));
+  ok(`${type.padEnd(22)} surviving axis baked`,
+     SURVIVING_AXIS[axis].every((v) => src.includes(v.toFixed(6))));
+  ok(`${type.padEnd(22)} all four modes`,
+     ["vec3 natural(", "vec3 achromatic(", "vec3 split(", "vec3 pulse("].every((m) => src.includes(m)));
 }
 
-console.log("\nMonochromacy honestly declines to recolour:");
-for (const type of ["achromatopsia", "blueConeMonochromacy"]) {
-  const src = buildFragment({ type, severity: 1 });
-  ok(`${type.padEnd(22)} assist is a passthrough`, !src.includes("assistNatural") && src.includes("uMode == 2"));
+console.log("\nPulse safety is baked in, not left to the caller:");
+{
+  const src = buildFragment({ type: "deuteranomaly", severity: 0.9 });
+  const hz = parseFloat(src.match(/PI \* ([0-9.]+) \* uTime/)[1]);
+  ok(`pulse rate ${hz}Hz is at or below 1.5`, hz <= 1.5);
+  ok("pulse is far below the 3-30Hz photosensitive band", hz < 3);
+  // Luminance is pinned to natural's before crossfading, so the screen cannot
+  // strobe — only chroma moves.
+  ok("pulse crossfades at constant luminance", /withLuma\(split\(lin\), dot\(a, LUMA\)\)/.test(src));
+  ok("pulse is gated to pixels carrying lost information", src.includes("gate"));
+  ok("pulse hue cap present", src.includes(DEFAULTS.pulseHueCapDeg.toFixed(1)));
+  ok("natural hue cap present", src.includes(DEFAULTS.hueCapDeg.toFixed(1)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

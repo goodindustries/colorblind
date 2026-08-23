@@ -1,8 +1,4 @@
-# Correction model
-
-> Integrated into `src/engine.js` and `src/render.js`. Kept as the design
-> rationale; the measured numbers below are from the original standalone stub,
-> and SCIENCE.md carries the post-integration figures.
+# Correction model — what it is and why
 
 `src/correct.js` — `correctPixel(lin, profile, mode, t)`. Drop-in; swap its
 `simulate` for `engine.simulate` (Machado tables + Brettel) before shipping.
@@ -58,3 +54,57 @@ Everything is per-pixel with no neighbourhood or history: `lostAxis` is a
 per-profile uniform, `t` is a uniform, Lab round-trip for the hue guard is
 ~40 flops. Pulse gate uses `|err|` so camera noise in flat regions does not
 move.
+
+# Calibration — `src/calibrate.js`
+
+Cambridge Colour Test, Trivector protocol (Mollon & Reffin 1989; Regan,
+Reffin & Mollon 1994), child form per Goulart et al. 2008 with a fish in
+place of the Landolt C and a tap in place of the gap.
+
+Published parameters kept: background u'v' (0.1977, 0.4689); copunctal
+points; dot luminance 8–18 cd/m² in six levels; dot diameters 5.7–13.1
+arcmin; staircase from 1100×10⁻⁴ u'v', 1-down/1-up, step halving on
+reversal, 11 reversals, threshold = mean of last 7; three vectors interleaved.
+
+Ours, not validated: catch trials (1 in 8, no fish — detects guessing);
+40-trial cap per vector (a dichromat pinned at the ceiling never reverses);
+luminance reduced rather than channels clipped when a stimulus exceeds the
+gamut; threshold → Machado severity via the reduction model.
+
+Gamut reach from the CCT background in sRGB: protan 1099, deutan 642,
+tritan 1099. The deutan line is short in sRGB. Recompute `maxLevel` with P3
+primaries on device; strong deutans will pin at the ceiling otherwise, which
+still classifies correctly but loses severity resolution exactly where Z is.
+
+Simulated observer (Weibull, 4% lapse), 60 runs each: type recovered
+98–100%; threshold error ≈ 10–16% (log); ≈ 70–80 trials, ~3 min.
+
+Device: full brightness, True Tone and Night Shift off, store device model.
+Thresholds are relative on an uncalibrated screen — fine for type and for
+the shader's severity parameter; not clinical numbers.
+
+
+---
+
+## Integration notes (added on wiring, nothing above changed)
+
+- `correct.js` `simulate` now calls `engine.simulate` (Machado tables +
+  Brettel) as instructed. `lostAxis` is memoised — `decompose` was calling a
+  64-iteration power method per pixel.
+- `render.js` is a GLSL transcription of `correct.js`, reading `lostAxis`,
+  `SURVIVING_AXIS` and `DEFAULTS` from it, so the shader cannot drift from the
+  model the tests cover. All 18 generated shaders verified to compile on a real
+  GL context. Pulse baked at 1.0 Hz, caps at 16°/30°.
+- Calibration stimuli run in Display P3 where the browser supports it.
+  Measured reach along the deutan line: **sRGB 642 → P3 845**, 32% further.
+  Still short of the 1100 ceiling, so a threshold above ~845 saturates and
+  reads as "at the ceiling" rather than a precise severity. The axis is
+  recovered correctly either way.
+- Catch trials could never be passed as first wired: the UI required a tap on
+  every trial, so a run of random taps produced a confident, wrong profile.
+  Not tapping is now the answer — a 5 s timeout collects it — and a run with
+  too many false alarms is discarded rather than saved.
+- `rewardPalette(profile, n, minDE)` picks scale colours by farthest-point
+  search in the space the observer actually perceives. 12 scales for every
+  profile tested; closest pair ΔE 54.8 (normal) down to 24.7 (dichromat),
+  against a required 15.
