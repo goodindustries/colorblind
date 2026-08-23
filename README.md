@@ -93,6 +93,23 @@ device can tell you:
 Results land in `window.__DIAG` as JSON so a headless browser can read them,
 and there is a Copy button for pasting them back.
 
+## Training the objective
+
+The per-pixel parameters are fitted to each frame at runtime, so what is left
+to learn are the objective's constants: how hard to punish losing usable
+separation, and where the floor and ceiling of "usable" sit.
+
+```bash
+python3 -m http.server 8765          # serve the repo
+# from a directory where Playwright is installed:
+TRAIN_URL=http://localhost:8765/train.html \
+TRAIN_OUT=tools/train-result.json node tools/train.mjs
+```
+
+Put photographs in `corpus/` and list them in `corpus/index.json`; the trainer
+adds generated scenes with realistic statistics on top. Current constants were
+swept over 26 images — see the comment in `src/adapt.js`.
+
 ## Running it
 
 Easiest: open **https://goodindustries.github.io/colorblind/** on your phone

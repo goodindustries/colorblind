@@ -14,6 +14,7 @@ import { TYPES, simulate, toLab, deltaE, from255, linearToSrgb, srgbToLinear } f
 import { correctPixel, effectiveSeverity } from "./correct.js";
 import { createRenderer, MODE } from "./render.js";
 import * as K from "./calibrate.js";
+import { optimiseForPalette, applyParams, makeContext as adaptContext } from "./adapt.js";
 
 export const MODE_NAMES = ["normal", "natural", "simulate", "split", "achromatic", "pulse"];
 
@@ -178,19 +179,30 @@ export function sceneReport(imageData, profile, opts = {}) {
   const bands = { invisible: 0, hard: 0, workable: 0 };
   for (const p of top) bands[band(p)]++;
 
-  const modes = opts.modes ?? ["natural", "achromatic", "split"];
+  const modes = opts.modes ?? ["natural", "achromatic", "split", "adaptive"];
   const results = {};
+
+  // The adaptive mode fits itself to THIS palette before being measured on it,
+  // which is exactly how it will behave on a live frame.
+  const adaptPalette = palette.map((p) => ({ lin: from255(p.rgb), share: p.share }));
+  const fitted = optimiseForPalette(adaptPalette, cprof, { strength });
+  const actx = adaptContext(cprof);
+  const applyMode = (lin, m) =>
+    m === "adaptive" ? applyParams(lin, actx, fitted, strength)
+                     : correctPixel(lin, cprof, m, 0, { strength });
+
   for (const m of modes) {
     const gains = [], after = [];
-    let worseCount = 0;
+    let worseCount = 0, worseWeight = 0, totalWeight = 0;
     for (const p of top) {
-      const ca = correctPixel(p.a.lin, cprof, m, 0, { strength });
-      const cb = correctPixel(p.b.lin, cprof, m, 0, { strength });
+      const ca = applyMode(p.a.lin, m);
+      const cb = applyMode(p.b.lin, m);
       const d = deltaE(P(ca), P(cb));
       after.push(d);
       const g = d / Math.max(p.seenD, 0.5);
       gains.push(g);
-      if (d < p.seenD - 0.5) worseCount++;
+      totalWeight += p.weight;
+      if (d < p.seenD - 0.5) { worseCount++; worseWeight += p.weight; }
     }
     gains.sort((a, b) => a - b);
     after.sort((a, b) => a - b);
@@ -207,6 +219,8 @@ export function sceneReport(imageData, profile, opts = {}) {
       medianGainOnInvisible: q(hardGains, 0.5),
       medianSeparationAfter: q(after, 0.5),
       pairsMadeWorse: top.length ? worseCount / top.length : 0,
+      frameMadeWorse: totalWeight ? worseWeight / totalWeight : 0,
+      ...(m === "adaptive" ? { fittedTo: { kL: +fitted.kL.toFixed(2), kC: +fitted.kC.toFixed(2), kF: +fitted.kF.toFixed(2), sat: +fitted.sat.toFixed(2) } } : {}),
     };
   }
 

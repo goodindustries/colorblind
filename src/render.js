@@ -34,6 +34,7 @@ uniform int uMode;
 uniform float uBoost;
 uniform float uDim;
 uniform float uTime;
+uniform vec4 uFit;      // per-frame fit: kL, kC, kF, sat
 
 const float PI = 3.14159265;
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -199,13 +200,18 @@ const vec3 SURV = ${glslVec(SURVIVING_AXIS[axis])};
 // correct.js decompose(): the loss this eye actually carries.
 vec3 errOf(vec3 lin){ return (lin - simulateFull(lin)) * ${k.toFixed(6)}; }
 
+// Fitted to the frame, not to constants chosen in advance. uFit carries the
+// result of adapt.js optimising against this frame's own palette; the taper in
+// errOf and the hue cap below are unchanged.
 vec3 natural(vec3 lin){
   vec3 err = errOf(lin);
   float d = dot(err, LOST);
+  vec3 f = ${glslMat(shift)} * err;
   float Y = dot(lin, LUMA);
-  vec3 o = lin + err * uBoost * 0.8 + SURV * d * uBoost * 0.6;
-  o = withLuma(o, Y);
-  o = vec3(Y) + (o - vec3(Y)) * (1.0 + 0.35 * uBoost);
+  vec3 o = lin + SURV * d * uFit.y * uBoost + f * uFit.z * uBoost;
+  float Y2 = clamp(Y * pow(2.0, uFit.x * d * uBoost), 0.02, 1.0);
+  o = withLuma(o, Y2);
+  o = vec3(Y2) + (o - vec3(Y2)) * (1.0 + uFit.w * uBoost);
   return guardHue(mapToGamut(o), lin, ${P.hueCapDeg.toFixed(1)});
 }
 
@@ -265,7 +271,8 @@ export function createRenderer(canvas) {
     }
   } catch { wideGamut = false; }
 
-  const state = { profile: null, mode: MODE.NATURAL, boost: 0.55, mirror: 0, dim: 1 };
+  const state = { profile: null, mode: MODE.NATURAL, boost: 0.55, mirror: 0, dim: 1,
+                  fit: { kL: 0, kC: 0.8, kF: 0.6, sat: 0.2 } };
   const t0 = performance.now();
   let prog = null, loc = null, video = null;
 
@@ -301,7 +308,7 @@ export function createRenderer(canvas) {
     const a = gl.getAttribLocation(prog, "aPos");
     gl.enableVertexAttribArray(a);
     gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
-    loc = ["uTex","uMode","uBoost","uScale","uMirror","uDim","uTime"]
+    loc = ["uTex","uMode","uBoost","uScale","uMirror","uDim","uTime","uFit"]
       .reduce((o, n) => (o[n] = gl.getUniformLocation(prog, n), o), {});
     gl.uniform1i(loc.uTex, 0);
   }
@@ -326,6 +333,8 @@ export function createRenderer(canvas) {
     setBoost(b) { state.boost = Math.max(0, Math.min(1, b)); },
     setMirror(on) { state.mirror = on ? 1 : 0; },
     setExposure(d) { state.dim = Math.max(0.2, Math.min(2.5, d)); },
+    /** Per-frame fit from adapt.js: {kL, kC, kF, sat}. */
+    setFit(f) { state.fit = { ...state.fit, ...f }; },
 
     resize(dpr = Math.min(devicePixelRatio || 1, 2)) {
       const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
@@ -346,6 +355,7 @@ export function createRenderer(canvas) {
       gl.uniform1f(loc.uBoost, state.boost);
       gl.uniform1f(loc.uDim, state.dim);
       gl.uniform1f(loc.uTime, (performance.now() - t0) / 1000);
+      gl.uniform4f(loc.uFit, state.fit.kL, state.fit.kC, state.fit.kF, state.fit.sat);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       return true;
     },

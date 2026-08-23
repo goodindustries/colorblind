@@ -20,6 +20,8 @@ import { TYPES, simulate, assist, linearToSrgb, srgbToLinear } from "./engine.js
 import { createRenderer, openCamera, MODE } from "./render.js";
 import { nameColor, averagePatch, makeSmoother } from "./naming.js";
 import * as Profiles from "./profiles.js";
+import { quantiseFrame, optimiseForPalette, makeSmoother as makeFitSmoother,
+         DEFAULT_PARAMS } from "./adapt.js";
 import { runSession, drawReward, makeContext, toEngineProfile, reliability } from "./calibrate.ui.js";
 import { displayPolicy } from "./profiles.js";
 
@@ -78,11 +80,52 @@ function applyProfile() {
   renderer.setMode(MODES[S.mode].key);
 }
 
+// ---------------------------------------------------------------------------
+// Per-frame fit
+//
+// Two fixed corrections failed the same way: tuned for one kind of colour pair,
+// they damaged another. A fixed map from three dimensions into two has to
+// sacrifice something, and constants chosen in advance cannot know what the
+// camera is pointed at. So the correction is refitted to what is actually on
+// screen, a couple of times a second, and eased between fits.
+// ---------------------------------------------------------------------------
+const FIT_HZ = 1.5;
+const smoothFit = makeFitSmoother(300, DEFAULT_PARAMS);
+let lastFit = 0, fitTarget = { ...DEFAULT_PARAMS }, fitCost = 0;
+
+function refit(now) {
+  const src = S.cam ? vid : null;
+  if (!src || !src.videoWidth) return;
+  const t0 = performance.now();
+  const N = 48;
+  sampler.width = N; sampler.height = N;
+  try { sctx.drawImage(src, 0, 0, N, N); } catch { return; }
+  let d;
+  try { d = sctx.getImageData(0, 0, N, N).data; } catch { return; }
+  const samples = [];
+  for (let i = 0; i < d.length; i += 4)
+    samples.push([d[i], d[i + 1], d[i + 2]].map((v) => srgbToLinear(v / 255)));
+  const palette = quantiseFrame(samples, 32);
+  const axis = { protanomaly: "protan", protanopia: "protan", deuteranomaly: "deutan",
+                 deuteranopia: "deutan", tritanomaly: "tritan", tritanopia: "tritan" }[me.type];
+  if (!axis) return;
+  fitTarget = optimiseForPalette(palette, { axis, severity: me.severity }, { strength: me.boost });
+  fitCost = performance.now() - t0;
+  // The sampler is shared with the colour readout; put it back.
+  sampler.width = 32; sampler.height = 32;
+}
+
 function frame() {
   renderer.resize();
+  const now = performance.now();
+  if (S.cam && now - lastFit > 1000 / FIT_HZ) { lastFit = now; refit(now); }
+  renderer.setFit(smoothFit(fitTarget, now));
   renderer.draw();
   requestAnimationFrame(frame);
 }
+
+// Exposed so test.html and a headless run can see what the live fit is doing.
+window.__FIT = () => ({ target: fitTarget, costMs: fitCost });
 
 // ---------------------------------------------------------------------------
 // Sampling — always from the RAW source, never the corrected canvas, so the

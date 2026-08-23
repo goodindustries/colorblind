@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Corpus trainer</title>
+<style>body{background:#0b0c0e;color:#eee;font:13px/1.5 ui-monospace,Menlo,monospace;padding:16px}
+pre{white-space:pre-wrap}</style></head>
+<body><pre id="out">loading…</pre>
+<script type="module">
+/**
+ * Corpus trainer.
+ *
+ * The per-pixel parameters are fitted per frame at runtime, so what is left to
+ * learn are the OBJECTIVE'S constants — how hard to punish losing usable
+ * separation, and where the floor and ceiling of "usable" sit. Those are the
+ * numbers that decide whether the optimiser acts at all, and they should be
+ * learned from many images rather than picked.
+ *
+ * Runs headless via tools/train.mjs. Corpus is whatever images are served from
+ * /corpus/, plus generated scenes with realistic statistics.
+ */
+import { sceneReport } from "./src/diagnostics.js";
+import * as Adapt from "./src/adapt.js";
+import { optimiseForPalette, applyParams, makeContext } from "./src/adapt.js";
+import { toLab, deltaE, from255, simulate } from "./src/engine.js";
+import { correctPixel } from "./src/correct.js";
+
+const out = document.getElementById("out");
+const log = (s) => { out.textContent += s + "\n"; };
+out.textContent = "";
+
+// --- corpus ---------------------------------------------------------------
+// Flat discs of six colours are not a photograph. Real frames carry shading,
+// so every surface spreads into dozens of nearby colours — which is why the
+// earlier synthetic scenes disagreed with the one real photo we have.
+function generated(seed, palette) {
+  const W = 256, c = document.createElement("canvas");
+  c.width = W; c.height = W;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  let s = seed >>> 0 || 1;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  x.fillStyle = palette[0]; x.fillRect(0, 0, W, W);
+  for (let i = 0; i < 90; i++) {
+    x.fillStyle = palette[Math.floor(rnd() * palette.length)];
+    x.globalAlpha = 0.55 + rnd() * 0.45;
+    x.beginPath();
+    x.ellipse(rnd() * W, rnd() * W, 8 + rnd() * 42, 6 + rnd() * 34, rnd() * 6, 0, 7);
+    x.fill();
+  }
+  x.globalAlpha = 1;
+  // Shading and sensor noise: this is what turns 6 colours into hundreds.
+  const im = x.getImageData(0, 0, W, W), d = im.data;
+  for (let y = 0; y < W; y++) for (let px = 0; px < W; px++) {
+    const o = (y * W + px) * 4;
+    const shade = 0.62 + 0.45 * (0.5 + 0.5 * Math.sin(px / 47 + seed) * Math.cos(y / 61 - seed));
+    for (let k = 0; k < 3; k++)
+      d[o + k] = Math.max(0, Math.min(255, d[o + k] * shade + (rnd() - 0.5) * 9));
+  }
+  x.putImageData(im, 0, 0);
+  return x.getImageData(0, 0, W, W);
+}
+const PALETTES = {
+  garden:  ["#3d5a20","#4f7a26","#2c4718","#6f9438","#7d4a20","#b8321f","#8f9a3a"],
+  fruit:   ["#d8cbb4","#c0341f","#7aa32c","#e08c1a","#8e5a24","#b53a2c","#d4a017"],
+  wires:   ["#1c1c1e","#b32b1e","#6b4423","#2f7d32","#c9a227","#2d4f9e","#7a2f6a"],
+  street:  ["#5a5f66","#8c8f93","#b3391f","#2f7d32","#c9a227","#31527d","#6b4423"],
+  indoors: ["#b9a68c","#7d5a3c","#3f5c33","#a33b2a","#c9b24a","#4a5f7d","#6d6a62"],
+  skin:    ["#e8c3a0","#c98f6b","#8d5a3c","#b8492f","#3f6b3a","#d9c27a","#5d6b8a"],
+};
+
+async function loadServed() {
+  let list = [];
+  try { list = await (await fetch("/corpus/index.json")).json(); } catch { return []; }
+  const imgs = [];
+  for (const name of list) {
+    try {
+      const img = new Image();
+      await new Promise((r, j) => { img.onload = r; img.onerror = j; img.src = "/corpus/" + name; });
+      const S = 320;
+      const c = document.createElement("canvas");
+      c.width = S; c.height = Math.max(1, Math.round(S * img.height / img.width));
+      const x = c.getContext("2d", { willReadFrequently: true });
+      x.drawImage(img, 0, 0, c.width, c.height);
+      imgs.push({ name, data: x.getImageData(0, 0, c.width, c.height) });
+    } catch { log("  could not load " + name); }
+  }
+  return imgs;
+}
+
+const PROFILE = { type: "deuteranomaly", severity: 0.9 };
+
+// --- evaluation -----------------------------------------------------------
+// Judged on a metric the optimiser does NOT optimise: frame-weighted loss of
+// usable separation, plus median gain. Scoring it on its own objective would
+// only prove it can satisfy itself.
+function evaluate(corpus) {
+  const agg = {};
+  for (const { name, data } of corpus) {
+    const r = sceneReport(data, PROFILE);
+    for (const [m, v] of Object.entries(r.modes)) {
+      const a = agg[m] || (agg[m] = { gain: [], worse: [], frameWorse: [], scenes: 0 });
+      if (v.medianGain == null) continue;
+      a.gain.push(v.medianGain); a.worse.push(v.pairsMadeWorse);
+      a.frameWorse.push(v.frameMadeWorse ?? 0); a.scenes++;
+    }
+  }
+  const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  return Object.fromEntries(Object.entries(agg).map(([m, a]) => [m, {
+    scenes: a.scenes, gain: mean(a.gain), worse: mean(a.worse), frameWorse: mean(a.frameWorse),
+  }]));
+}
+
+(async () => {
+  const served = await loadServed();
+  const corpus = [
+    ...served,
+    ...Object.entries(PALETTES).flatMap(([k, p]) =>
+      [1, 2, 3, 4].map((i) => ({ name: `${k}-${i}`, data: generated(i * 7919 + k.length * 131, p) }))),
+  ];
+  log(`corpus: ${corpus.length} images (${served.length} photographs, ${corpus.length - served.length} generated)`);
+
+  // Sweep the objective's constants across the whole corpus.
+  const results = [];
+  for (const penalty of [6, 9, 14, 20, 30])
+    for (const [floor, ceil] of [[5, 35], [5, 45], [4, 40], [6, 35], [5, 60]]) {
+      Adapt.setTuning({ harmPenalty: penalty, floor, ceil });
+      const e = evaluate(corpus);
+      const ad = e.adaptive || {};
+      results.push({ penalty, floor, ceil, gain: ad.gain, worse: ad.worse, frameWorse: ad.frameWorse });
+      log(`  penalty ${String(penalty).padEnd(4)} floor ${String(floor).padEnd(2)} ceil ${String(ceil).padEnd(3)}` +
+          `  gain x${(ad.gain ?? 0).toFixed(2)}  worse ${((ad.worse ?? 0) * 100).toFixed(0)}%` +
+          `  frame ${((ad.frameWorse ?? 0) * 100).toFixed(0)}%`);
+    }
+
+  // Restore the default before measuring the fixed modes.
+  Adapt.setTuning({ harmPenalty: 20, floor: 5, ceil: 35 });
+  log("\nfixed modes on the same corpus, for comparison:");
+  const base = evaluate(corpus);
+  for (const [m, v] of Object.entries(base))
+    log(`  ${m.padEnd(11)} gain x${v.gain.toFixed(2)}  worse ${(v.worse * 100).toFixed(0)}%  frame ${(v.frameWorse * 100).toFixed(0)}%`);
+
+  window.__TRAIN = { corpus: corpus.map((c) => c.name), sweep: results, baseline: base };
+  window.__TRAIN_DONE = true;
+  log("\ndone");
+})().catch((e) => { window.__TRAIN_ERROR = String(e.stack || e); log("FAILED " + e); });
+</script></body></html>
