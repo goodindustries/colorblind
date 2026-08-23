@@ -73,6 +73,26 @@ gamut, Daltonize has nowhere to push the error and clipping makes it slightly
 limitation of error-redistribution daltonization, not a bug — it is why both
 modes are here.
 
+## Diagnostics
+
+**https://goodindustries.github.io/colorblind/test.html**
+
+Runs on the device, against the shipped code, and reports what only that
+device can tell you:
+
+- what this browser actually supports — wide-gamut canvas and WebGL, and how
+  far the calibration game can reach along each confusion line here
+- whether the GPU shader produces the same pixels as the tested CPU model
+  (the node suites check the maths and the GLSL text; only this checks the
+  pixels)
+- how the correction behaves on the colour distribution of a real picture:
+  load a photo, and it finds the pairs *that photo* contains which this
+  observer loses, bands them by how much is lost, and measures what each mode
+  does to them
+
+Results land in `window.__DIAG` as JSON so a headless browser can read them,
+and there is a Copy button for pasting them back.
+
 ## Running it
 
 Easiest: open **https://goodindustries.github.io/colorblind/** on your phone

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Colorblind — diagnostics</title>
+<style>
+  :root{--bg:#0b0c0e;--card:#15171b;--accent:#f5a623;--good:#8ad14b;--bad:#ff6b52;
+        --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:#f2f2f5;font-family:var(--sans);padding:20px 16px 60px;line-height:1.5}
+  h1{font-size:20px;letter-spacing:-.02em;margin-bottom:2px}
+  .sub{color:rgba(255,255,255,.45);font-size:13px;margin-bottom:18px}
+  .card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:12px}
+  .card h2{font:600 11px/1 var(--mono);letter-spacing:.14em;color:rgba(255,255,255,.42);
+           text-transform:uppercase;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td{padding:4px 0;vertical-align:top}
+  td:first-child{color:rgba(255,255,255,.5);padding-right:12px;white-space:nowrap}
+  td:last-child{font-family:var(--mono);font-size:12px;word-break:break-word}
+  .ok{color:var(--good)} .no{color:var(--bad)} .warn{color:var(--accent)}
+  button{font:600 14px/1 var(--sans);padding:14px 18px;border:0;border-radius:12px;
+         background:var(--accent);color:#141414;cursor:pointer}
+  button.ghost{background:rgba(255,255,255,.08);color:#fff}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  canvas{border-radius:8px;background:#000;max-width:100%}
+  #scenes{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+  #scenes canvas{width:96px;height:96px;flex:none;cursor:pointer;box-shadow:0 0 0 1px rgba(255,255,255,.14)}
+  #scenes canvas.on{box-shadow:0 0 0 3px var(--accent)}
+  pre{font-family:var(--mono);font-size:11px;white-space:pre-wrap;word-break:break-word;
+      color:rgba(255,255,255,.65);max-height:340px;overflow:auto}
+  #status{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:12px}
+  label.file{display:inline-block;padding:14px 18px;border-radius:12px;background:rgba(255,255,255,.08);
+             font:600 14px/1 var(--sans);cursor:pointer}
+  input[type=file]{display:none}
+</style>
+</head>
+<body>
+  <h1>Diagnostics</h1>
+  <div class="sub">Runs on this device, against the shipped code. Everything below is measured here, not assumed.</div>
+  <div id="status">starting…</div>
+
+  <div class="row">
+    <button id="run">Run all</button>
+    <label class="file">Test a photo<input id="file" type="file" accept="image/*"></label>
+    <button id="copy" class="ghost">Copy results</button>
+  </div>
+
+  <div class="card"><h2>Device</h2><table id="device"></table></div>
+  <div class="card"><h2>Shader vs model</h2><table id="gpu"></table>
+    <div class="sub" style="margin:10px 0 0">The node suites check the maths and the generated GLSL text.
+      Only this checks that the GPU produces the same pixels.</div></div>
+  <div class="card"><h2>Scenes</h2><div id="scenes"></div><table id="scene"></table></div>
+  <div class="card"><h2>Raw</h2><pre id="raw">—</pre></div>
+
+  <canvas id="work" width="256" height="16" style="display:none"></canvas>
+<script type="module">
+import { deviceReport, gpuAgreement, sceneReport, summarise, MODE_NAMES } from "./src/diagnostics.js";
+import * as Profiles from "./src/profiles.js";
+import { TYPES } from "./src/engine.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (t) => { $("status").textContent = t; };
+const rows = (el, pairs) => {
+  el.innerHTML = "";
+  for (const [k, v, cls] of pairs) {
+    const tr = el.insertRow();
+    tr.insertCell().textContent = k;
+    const c = tr.insertCell();
+    c.textContent = v;
+    if (cls) c.className = cls;
+  }
+};
+
+// Built-in scenes: the situations this app exists for. A photo can be loaded
+// too, and should be — these are stand-ins, not real pixel distributions.
+const SCENES = {
+  garden: (x, w, h) => {
+    x.fillStyle = "#4a6b2a"; x.fillRect(0, 0, w, h);
+    for (let i = 0; i < 260; i++) {
+      const g = ["#3f6b22","#5c8a2e","#2e5418","#6f9438","#587a2a","#7d4a20"][i % 6];
+      x.fillStyle = g; x.beginPath();
+      x.ellipse((i * 71) % w, (i * 137) % h, 6 + (i % 11), 4 + (i % 7), i, 0, 7); x.fill();
+    }
+    x.fillStyle = "#b8321f"; for (let i = 0; i < 9; i++) {
+      x.beginPath(); x.arc(24 + (i * 47) % (w - 40), 30 + (i * 83) % (h - 40), 9, 0, 7); x.fill(); }
+  },
+  fruit: (x, w, h) => {
+    x.fillStyle = "#d8cbb4"; x.fillRect(0, 0, w, h);
+    const F = ["#c0341f","#7aa32c","#e08c1a","#8e5a24","#b53a2c","#5d8a24","#d4a017"];
+    for (let i = 0; i < 26; i++) {
+      x.fillStyle = F[i % F.length]; x.beginPath();
+      x.arc(30 + (i * 53) % (w - 60), 30 + (i * 97) % (h - 60), 16 + (i % 5) * 3, 0, 7); x.fill();
+    }
+  },
+  wires: (x, w, h) => {
+    x.fillStyle = "#1c1c1e"; x.fillRect(0, 0, w, h);
+    const C = ["#b32b1e","#6b4423","#2f7d32","#c9a227","#2d4f9e","#8a8a8a","#7a2f6a"];
+    for (let i = 0; i < C.length; i++) {
+      x.strokeStyle = C[i]; x.lineWidth = h / (C.length * 1.7);
+      x.beginPath(); x.moveTo(0, (i + 0.5) * h / C.length);
+      x.bezierCurveTo(w * 0.3, (i + 0.2) * h / C.length, w * 0.7, (i + 0.9) * h / C.length, w, (i + 0.5) * h / C.length);
+      x.stroke();
+    }
+  },
+  signals: (x, w, h) => {
+    x.fillStyle = "#20242a"; x.fillRect(0, 0, w, h);
+    const S = ["#e02020","#f0a000","#25c02a"];
+    for (let i = 0; i < 12; i++) {
+      x.fillStyle = S[i % 3]; x.beginPath();
+      x.arc(30 + (i % 4) * (w - 60) / 3, 30 + Math.floor(i / 4) * (h - 60) / 2, 18, 0, 7); x.fill();
+    }
+  },
+};
+
+let scenes = {}, active = "garden", custom = null;
+function buildScenes() {
+  $("scenes").innerHTML = "";
+  for (const name of [...Object.keys(SCENES), ...(custom ? ["photo"] : [])]) {
+    const c = document.createElement("canvas");
+    c.width = 256; c.height = 256;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    if (name === "photo") x.drawImage(custom, 0, 0, 256, 256);
+    else SCENES[name](x, 256, 256);
+    c.title = name;
+    c.className = name === active ? "on" : "";
+    c.addEventListener("click", () => { active = name; buildScenes(); runScene(); });
+    scenes[name] = x.getImageData(0, 0, 256, 256);
+    $("scenes").appendChild(c);
+  }
+}
+
+const profile = () => { const s = Profiles.load(); return Profiles.active(s); };
+
+let DIAG = {};
+function runDevice() {
+  const d = deviceReport();
+  DIAG.device = d;
+  const reach = d.calibrationReach || {};
+  rows($("device"), [
+    ["browser", d.ua.replace(/^Mozilla\/5\.0 /, "").slice(0, 84)],
+    ["pixel ratio", String(d.dpr)],
+    ["secure context", d.secure ? "yes" : "NO — camera will not work", d.secure ? "ok" : "no"],
+    ["WebGL", d.webgl ? (d.renderer || "yes") : "MISSING", d.webgl ? "ok" : "no"],
+    ["wide-gamut canvas", d.canvasP3 ? "Display P3" : "sRGB only", d.canvasP3 ? "ok" : "warn"],
+    ["wide-gamut WebGL", d.glP3 ? "Display P3" : "sRGB only", d.glP3 ? "ok" : "warn"],
+    ["calibration reach, sRGB", reach.srgb ? `protan ${reach.srgb.protan}  deutan ${reach.srgb.deutan}  tritan ${reach.srgb.tritan}` : "—"],
+    ["calibration reach, P3", reach["display-p3"] ? `protan ${reach["display-p3"].protan}  deutan ${reach["display-p3"].deutan}  tritan ${reach["display-p3"].tritan}` : "—"],
+    ["deutan line reaches ceiling", d.deutanCeilingHit ? "yes" : "no — a very strong reading will saturate", d.deutanCeilingHit ? "ok" : "warn"],
+  ]);
+}
+
+function runGpu() {
+  const p = profile();
+  const out = [];
+  for (const m of ["natural", "achromatic", "split"]) {
+    try { out.push(gpuAgreement(p, $("work"), m)); }
+    catch (e) { out.push({ mode: m, error: String(e.message || e) }); }
+  }
+  DIAG.gpu = out;
+  rows($("gpu"), [
+    ["profile", `${TYPES[p.type].label} severity ${p.severity}`],
+    ...out.map((r) => [
+      r.mode,
+      r.error ? r.error : `mean ΔE ${r.meanDeltaE.toFixed(2)}   worst ${r.worstDeltaE.toFixed(2)} at rgb(${r.worstColour})`,
+      r.error ? "no" : r.worstDeltaE < 6 ? "ok" : "warn",
+    ]),
+  ]);
+}
+
+function runScene() {
+  const p = profile();
+  const img = scenes[active];
+  if (!img) return;
+  const r = sceneReport(img, p);
+  DIAG.scene = { name: active, ...r };
+  const m = r.modes;
+  rows($("scene"), [
+    ["scene", active],
+    ["colours found", String(r.coloursFound)],
+    ["pairs he loses", String(r.confusablePairs), r.confusablePairs ? "" : "warn"],
+    ["of those", r.difficulty ? `${r.difficulty.invisible} invisible · ${r.difficulty.hard} hard · ${r.difficulty.workable} workable` : "—"],
+    ["separation before", r.medianSeparationBefore == null ? "—" : r.medianSeparationBefore.toFixed(1)],
+    ...Object.entries(m).map(([k, v]) => [
+      k,
+      v.medianGain == null ? "—"
+        : `×${v.medianGain.toFixed(2)} median   ×${v.p10Gain.toFixed(2)} worst decile   ` +
+          `${v.medianGainOnInvisible != null ? "×" + v.medianGainOnInvisible.toFixed(2) + " on invisible   " : ""}` +
+          `${(v.pairsMadeWorse * 100).toFixed(0)}% made worse`,
+      v.pairsMadeWorse > 0.1 ? "warn" : v.medianGain > 1.2 ? "ok" : "",
+    ]),
+    ["hardest pairs", r.worstExamples.map((e) => `rgb(${e.a}) vs rgb(${e.b}) — ${e.normallyApart} apart, he sees ${e.seenApart}`).join("\n") || "none"],
+  ]);
+}
+
+function runAll() {
+  say("running…");
+  DIAG = { at: new Date().toISOString(), version: "diag-1" };
+  try {
+    runDevice(); runGpu(); runScene();
+    // Every scene, not just the visible one — that is the point of automating it.
+    DIAG.allScenes = {};
+    const keep = active;
+    for (const name of Object.keys(scenes)) DIAG.allScenes[name] = sceneReport(scenes[name], profile());
+    active = keep;
+    $("raw").textContent = summarise(DIAG);
+    window.__DIAG = DIAG;
+    window.__DIAG_DONE = true;
+    say("done — " + Object.keys(DIAG.allScenes).length + " scenes, results in window.__DIAG");
+  } catch (e) {
+    window.__DIAG_ERROR = String(e.stack || e);
+    $("raw").textContent = String(e.stack || e);
+    say("FAILED: " + e.message);
+  }
+}
+
+$("run").addEventListener("click", runAll);
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(summarise(DIAG)); say("copied"); }
+  catch { say("could not copy — select the Raw block instead"); }
+});
+$("file").addEventListener("change", (e) => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  const img = new Image();
+  img.onload = () => { custom = img; active = "photo"; buildScenes(); runAll(); };
+  img.src = URL.createObjectURL(f);
+});
+
+buildScenes();
+runAll();
+</script>
+</body>
+</html>
