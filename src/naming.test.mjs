@@ -14,6 +14,7 @@ is([210, 180, 140], "tan");
 is([128, 128, 0], "olive");
 is([255, 192, 203], "pink");
 is([0, 0, 128], "navy");
+is([240, 200, 175], "peach");
 
 console.log("\nBasics:");
 is([255, 0, 0], "vivid red");

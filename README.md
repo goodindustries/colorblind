@@ -104,12 +104,27 @@ The colour science lives in `src/` and is independent of any UI:
 | `src/naming.js` | Colour naming, read from raw sensor pixels |
 | [`SCIENCE.md`](SCIENCE.md) | Why each model was chosen, and what to build next |
 
+`src/app.js` implements the Claude Design "Colorblind Camera" spec.
 `src/render.js` is deliberately design-free — no colours, layout, or DOM beyond
 the canvas it is handed. The UI drives it through `setProfile` / `setMode` /
 `setBoost`, so a visual redesign never touches the colour science.
 
-Note: `index.html` still runs its own older deuteranomaly-only shader. Wiring it
-to `src/` is pending the UI design.
+### Divergences from the design file
+
+All deliberate, all listed at the top of `src/app.js`:
+
+- The design wraps the app in a mock iPhone bezel with a caption. That is
+  mockup presentation — the real app is the *contents* of that frame, full-bleed.
+- The design corrects with an SVG `feColorMatrix`. That cannot express Brettel's
+  two-half-plane projection (it branches per pixel) and cannot reach Display P3,
+  so rendering goes through WebGL. Layout, gestures, and visuals are unchanged.
+- Added the VISION picker. The design hardcodes deutan; without it the other
+  seven types are unreachable.
+- STRENGTH is 0..1, not the design's 0..1.6, because the boost parameter is
+  defined and verified monotonic on 0..1.
+- The design samples the geometric centre while drawing the reticle at 46%
+  height, so the name described a different spot than the crosshair. Fixed —
+  sampling now follows the reticle's real position through zoom and cover-crop.
 
 ## Algorithms
 

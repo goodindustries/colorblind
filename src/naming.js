@@ -57,15 +57,18 @@ export function nameColor(r, g, b) {
     else if (l >= 0.52 && s < 0.55) base = "tan";
   }
   if (h < 12 && l < 0.30) base = "maroon";
+  // Borrowed from the design's palette: light warm tones read as "peach",
+  // which beats "pale orange" for skin — the one case its namer won on.
+  if (h >= 10 && h < 45 && l > 0.72 && s > 0.30) base = "peach";
   if ((h >= 330 || h < 12) && l > 0.66) base = "pink";
   if (h >= 300 && h < 330 && l > 0.72) base = "pink";
   if (h >= 50 && h < 90 && l < 0.38) base = "olive";
   if (h >= 200 && h < 267 && l < 0.28) base = "navy";
 
   let mod = "";
-  const literal = ["brown", "olive", "navy", "black", "maroon", "tan"];
+  const literal = ["brown", "olive", "navy", "black", "maroon", "tan", "peach"];
   if (l < 0.26 && !literal.includes(base)) mod = "dark ";
-  else if (l > 0.78 && base !== "pink") mod = "pale ";
+  else if (l > 0.78 && base !== "pink" && !literal.includes(base)) mod = "pale ";
   else if (s > 0.80 && l > 0.30 && l < 0.72) mod = "vivid ";
   else if (s < 0.28) mod = "muted ";
   return mod + base;

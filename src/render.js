@@ -159,8 +159,13 @@ export function createRenderer(canvas) {
     gl.uniform1i(loc.uTex, 0);
   }
 
+  // The source is a <video> once the camera is live, and a <canvas> before
+  // that (the demo scene), so read dimensions from whichever it is.
+  const srcW = () => video?.videoWidth || video?.width || 0;
+  const srcH = () => video?.videoHeight || video?.height || 0;
+
   const coverScale = () => {
-    const vw = video?.videoWidth || 1, vh = video?.videoHeight || 1;
+    const vw = srcW() || 1, vh = srcH() || 1;
     const va = vw / vh, ca = (canvas.width || 1) / (canvas.height || 1);
     return va > ca ? [ca / va, 1] : [1, va / ca];
   };
@@ -173,7 +178,7 @@ export function createRenderer(canvas) {
     setMode(m) { state.mode = m; },
     setBoost(b) { state.boost = Math.max(0, Math.min(1, b)); },
     setMirror(on) { state.mirror = on ? 1 : 0; },
-    setDim(d) { state.dim = Math.max(0.2, Math.min(1, d)); },
+    setExposure(d) { state.dim = Math.max(0.2, Math.min(2.5, d)); },
 
     resize(dpr = Math.min(devicePixelRatio || 1, 2)) {
       const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
@@ -182,7 +187,8 @@ export function createRenderer(canvas) {
     },
 
     draw() {
-      if (!prog || !video || video.readyState < 2) return false;
+      if (!prog || !video) return false;
+      if (video.readyState !== undefined && video.readyState < 2) return false;
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
@@ -205,7 +211,7 @@ export function createRenderer(canvas) {
       let ux = (tx - 0.5) / sx + 0.5;
       const uy = (ty - 0.5) / sy + 0.5;
       if (state.mirror) ux = 1 - ux;
-      const vw = video?.videoWidth || 0, vh = video?.videoHeight || 0;
+      const vw = srcW(), vh = srcH();
       return [
         Math.max(0, Math.min(vw - 1, ux * vw)),
         Math.max(0, Math.min(vh - 1, uy * vh)),

@@ -14,7 +14,9 @@
 import { TYPES, severityFromRayleigh } from "./engine.js";
 
 const KEY = "colorblind.profiles.v1";
-const AVATARS = ["🦊","🐢","🐙","🦋","🐝","🦁","🐬","🦉","🐸","🦄","🐧","🦖"];
+// The design identifies a profile by an initial on a coloured disc, not an
+// emoji. These are its six swatches.
+const AVATAR_COLORS = ["#f5a623", "#2f9bf0", "#f2e327", "#1b2a6b", "#d2b48c", "#22c8d8"];
 
 const safeRead = () => {
   try {
@@ -30,14 +32,14 @@ const safeWrite = (state) => {
 let counter = 0;
 const newId = () => `p${Date.now().toString(36)}${(counter++).toString(36)}`;
 
-export function defaultProfile(name = "Me") {
+export function defaultProfile(name = "Z") {
   return {
     id: newId(),
     name,
-    avatar: AVATARS[0],
+    avatarColor: AVATAR_COLORS[0],
     type: "deuteranomaly",   // by far the most common
-    severity: 0.8,
-    boost: 0.55,
+    severity: 0.9,   // the design's default, and typical of a "strong" result
+    boost: 0.6,
     calibrated: false,
     speak: false,
   };
@@ -73,7 +75,7 @@ export const active = (state) => state.profiles.find((p) => p.id === state.activ
 
 export function add(state, name) {
   const p = defaultProfile(name);
-  p.avatar = AVATARS[state.profiles.length % AVATARS.length];
+  p.avatarColor = AVATAR_COLORS[state.profiles.length % AVATAR_COLORS.length];
   const next = { profiles: [...state.profiles, p], activeId: p.id };
   save(next);
   return next;
@@ -101,4 +103,4 @@ export function applyCalibration(state, id, match) {
   return update(state, id, { type, severity, calibrated: true, calibrationNote: confidence });
 }
 
-export { AVATARS };
+export { AVATAR_COLORS };
