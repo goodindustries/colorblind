@@ -514,6 +514,45 @@ async function calibrate() {
 
 $("calBtn").addEventListener("click", calibrate);
 
+// ---------------------------------------------------------------------------
+// First-run setup
+//
+// Everything the correction does depends on whose eyes it is for, and an
+// uncalibrated profile is running on a guess. The sheet has always held these
+// controls, but nothing pointed anyone at them — so the app shipped looking
+// finished while quietly using default numbers. This asks once, up front.
+// ---------------------------------------------------------------------------
+function paintSetup() {
+  const initial = (me.name || "Z").slice(0, 2).toUpperCase();
+  $("setupAvatar").textContent = initial;
+  $("setupAvatar").style.background = me.avatarColor || BG[0];
+  $("setupLetter").value = me.name;
+  document.querySelectorAll("#setupColours button").forEach((o, i) =>
+    o.setAttribute("aria-pressed", String((me.avatarColor || BG[0]) === BG[i])));
+}
+
+BG.forEach((c) => {
+  const b = document.createElement("button");
+  b.style.background = c;
+  b.setAttribute("aria-label", "Their colour");
+  b.addEventListener("click", () => { persist({ avatarColor: c }); paintSetup(); });
+  $("setupColours").appendChild(b);
+});
+$("setupLetter").addEventListener("input", (e) => {
+  persist({ name: (e.target.value || "Z").toUpperCase().slice(0, 2) });
+  paintSetup();
+});
+
+const closeSetup = () => { $("setup").classList.remove("on"); };
+$("setupSkip").addEventListener("click", () => {
+  closeSetup();
+  flash("Using a starting guess. Measure any time from the gear.", 2600);
+});
+$("setupMeasure").addEventListener("click", async () => {
+  closeSetup();
+  await calibrate();
+});
+
 $("save").addEventListener("click", () => {
   gl.toBlob((b) => {
     if (!b) return flash("Could not save");
@@ -543,8 +582,12 @@ function boot() {
 
   syncSheet();
   paintChrome();
+  paintSetup();
   setInterval(sample, 140);
   requestAnimationFrame(frame);
+
+  // Nobody measured yet, and only one person: this is a first run.
+  if (!me.calibrated && state.profiles.length === 1) $("setup").classList.add("on");
 
   // Ask immediately. Already-granted permission means the camera is simply
   // live on launch, with no prompt at all.

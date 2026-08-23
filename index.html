@@ -131,6 +131,29 @@
   #calState{font:400 12px/1.4 var(--sans);color:rgba(255,255,255,.4)}
   #calState.measured{color:#8ad14b}
 
+  /* ---- first-run setup ---- */
+  #setup{position:absolute;inset:0;z-index:97;display:none;align-items:center;justify-content:center;
+         padding:26px;background:#0b0c0e}
+  #setup.on{display:flex}
+  #setupCard{width:100%;max-width:340px;display:flex;flex-direction:column;gap:14px}
+  #setupTitle{font:700 24px/1.15 var(--sans);letter-spacing:-.02em}
+  #setupBody{font:400 14px/1.5 var(--sans);color:rgba(255,255,255,.55)}
+  #setupRow{display:flex;align-items:center;gap:12px;margin:4px 0}
+  #setupAvatar{width:56px;height:56px;flex:none;border-radius:999px;display:flex;align-items:center;
+               justify-content:center;font:700 25px/1 var(--sans);color:#141414;
+               box-shadow:0 0 0 2px rgba(255,255,255,.2);background:#f5a623}
+  #setupLetter{width:62px;padding:13px 0;text-align:center;border-radius:12px;
+               border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);
+               color:#fff;font:600 19px/1 var(--sans);outline:none}
+  #setupColours{display:grid;grid-template-columns:repeat(3,26px);gap:7px}
+  #setupColours button{width:26px;height:26px;border-radius:8px;box-shadow:0 0 0 1px rgba(255,255,255,.18)}
+  #setupColours button[aria-pressed="true"]{box-shadow:0 0 0 2px #fff}
+  #setupMeasure{padding:17px;border-radius:16px;background:var(--accent);color:#141414;
+                font:700 16px/1 var(--sans)}
+  #setupSkip{padding:13px;border-radius:14px;background:none;color:rgba(255,255,255,.5);
+             font:500 14px/1 var(--sans)}
+  #setupNote{font:400 12px/1.5 var(--sans);color:rgba(255,255,255,.32)}
+
   /* ---- calibration game ---- */
   #cal{position:absolute;inset:0;z-index:95;display:none;flex-direction:column;background:#000}
   #cal.on{display:flex}
@@ -200,6 +223,21 @@
         <span class="chip"></span><span class="ico">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="1.6" y="4.2" width="14.8" height="11" rx="3"/><circle cx="9" cy="9.7" r="3.1"/></svg></span></button>
+    </div>
+  </div>
+
+  <div id="setup" data-chrome>
+    <div id="setupCard">
+      <div id="setupTitle">Who is using this?</div>
+      <div id="setupBody">The colours get adjusted for one person's eyes. Set that up once.</div>
+      <div id="setupRow">
+        <div id="setupAvatar">Z</div>
+        <input id="setupLetter" value="Z" maxlength="2" aria-label="Their initial">
+        <div id="setupColours"></div>
+      </div>
+      <button id="setupMeasure">Measure their eyes</button>
+      <button id="setupSkip">Skip for now</button>
+      <div id="setupNote">Measuring takes about 3 minutes and is a game: tap the fish. Without it the app uses a common starting guess, which may be the wrong one.</div>
     </div>
   </div>
 
