@@ -128,6 +128,8 @@ const BRETTEL = {
   },
 };
 
+export const brettelParams = (kind) => BRETTEL[kind];
+
 /** Brettel dichromat simulation. `lin` is linear RGB. */
 export function brettel(lin, kind, severity = 1) {
   const p = BRETTEL[kind];

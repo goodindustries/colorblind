@@ -1,0 +1,12 @@
+{
+  "name": "colorblind",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-time colour-vision assist camera",
+  "license": "MIT",
+  "scripts": {
+    "test": "node src/engine.test.mjs && node src/naming.test.mjs && node src/render.test.mjs",
+    "optimize": "node src/optimize.mjs"
+  }
+}
