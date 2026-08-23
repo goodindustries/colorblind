@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>colorblind — colour assist camera</title>
+<style>
+  :root{
+    --bg:#0b0b0d; --panel:#16161a; --line:#2a2a31;
+    --fg:#f2f2f5; --dim:#9a9aa5; --accent:#ffb020;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    overscroll-behavior:none}
+  #stage{position:fixed;inset:0;display:flex;flex-direction:column}
+  #view{position:relative;flex:1;min-height:0;background:#000;overflow:hidden}
+  canvas#gl{width:100%;height:100%;display:block;object-fit:cover}
+  video,canvas#probe{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px}
+
+  /* centre reticle */
+  #retic{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;
+    border:2px solid rgba(255,255,255,.9);border-radius:50%;
+    box-shadow:0 0 0 2px rgba(0,0,0,.55),inset 0 0 0 2px rgba(0,0,0,.55);pointer-events:none}
+  #readout{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);
+    display:flex;align-items:center;gap:10px;padding:8px 14px 8px 8px;
+    background:rgba(10,10,12,.82);backdrop-filter:blur(12px);
+    border:1px solid var(--line);border-radius:999px;white-space:nowrap;max-width:94%}
+  #swatch{width:34px;height:34px;border-radius:50%;border:2px solid rgba(255,255,255,.85);flex:none}
+  #name{font-weight:650;font-size:17px;letter-spacing:.01em}
+  #hex{color:var(--dim);font-variant-numeric:tabular-nums;font-size:13px}
+
+  #banner{position:absolute;inset:auto 12px 84px 12px;padding:14px 16px;border-radius:14px;
+    background:rgba(10,10,12,.9);border:1px solid var(--line);color:var(--dim);display:none}
+  #banner b{color:var(--fg);display:block;margin-bottom:4px}
+
+  /* controls */
+  #panel{background:var(--panel);border-top:1px solid var(--line);
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));flex:none}
+  #modes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .chip{appearance:none;border:1px solid var(--line);background:#1e1e24;color:var(--dim);
+    padding:9px 4px;border-radius:10px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#241700}
+  .row{display:flex;align-items:center;gap:10px;margin-top:10px}
+  .row label{width:74px;color:var(--dim);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
+  input[type=range]{flex:1;accent-color:var(--accent);height:26px}
+  .val{width:38px;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums;font-size:13px}
+  #actions{display:flex;gap:6px;margin-top:10px}
+  #actions .chip{flex:1;padding:11px 4px;color:var(--fg)}
+  #hint{margin-top:9px;color:var(--dim);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="view">
+    <canvas id="gl"></canvas>
+    <video id="vid" playsinline muted autoplay></video>
+    <canvas id="probe" width="16" height="16"></canvas>
+    <div id="retic"></div>
+    <div id="readout"><div id="swatch"></div><span id="name">starting camera…</span><span id="hex"></span></div>
+    <div id="banner"></div>
+  </div>
+
+  <div id="panel">
+    <div id="modes">
+      <button class="chip" data-mode="0" aria-pressed="false">Off</button>
+      <button class="chip" data-mode="1" aria-pressed="true">Daltonize</button>
+      <button class="chip" data-mode="2" aria-pressed="false">Split</button>
+      <button class="chip" data-mode="3" aria-pressed="false">Simulate</button>
+    </div>
+    <div class="row">
+      <label for="sev">Severity</label>
+      <input id="sev" type="range" min="0" max="100" value="90">
+      <span class="val" id="sevv">0.90</span>
+    </div>
+    <div class="row">
+      <label for="amt">Strength</label>
+      <input id="amt" type="range" min="0" max="200" value="100">
+      <span class="val" id="amtv">1.00</span>
+    </div>
+    <div id="actions">
+      <button class="chip" id="freeze">Freeze</button>
+      <button class="chip" id="flip">Flip cam</button>
+      <button class="chip" id="shot">Save frame</button>
+      <button class="chip" id="about">What is this</button>
+    </div>
+    <div id="hint">Point the reticle at a colour to have it named.</div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Machado, Oliveira & Fernandes (2009) deuteranomaly simulation matrices.
+// Row-major, operate on LINEAR RGB. Index = severity in 0.1 steps.
+// ---------------------------------------------------------------------------
+const DEUTAN = [
+ [1,0,0, 0,1,0, 0,0,1],
+ [0.866435,0.177704,-0.044139, 0.049567,0.939063,0.011370, -0.003453,0.007233,0.996220],
+ [0.760729,0.319078,-0.079807, 0.090568,0.889315,0.020117, -0.006027,0.013325,0.992702],
+ [0.675425,0.433850,-0.109275, 0.125303,0.847755,0.026942, -0.007950,0.018741,0.989209],
+ [0.605511,0.528560,-0.134071, 0.155318,0.812366,0.032316, -0.009376,0.023176,0.986200],
+ [0.547494,0.607765,-0.155259, 0.181692,0.781742,0.036566, -0.010410,0.027275,0.983136],
+ [0.498864,0.674741,-0.173604, 0.205199,0.754872,0.039929, -0.011131,0.030969,0.980162],
+ [0.457771,0.731899,-0.189670, 0.226409,0.731012,0.042579, -0.011595,0.034333,0.977261],
+ [0.422823,0.781057,-0.203881, 0.245752,0.709602,0.044646, -0.011843,0.037423,0.974421],
+ [0.392952,0.823610,-0.216562, 0.263559,0.690210,0.046232, -0.011910,0.040281,0.971630],
+ [0.367322,0.860646,-0.227968, 0.280085,0.672501,0.047413, -0.011820,0.042940,0.968881],
+];
+
+// Interpolate the severity table, then hand GL a column-major mat3.
+function simMatrix(sev){
+  const t = Math.max(0, Math.min(1, sev)) * 10;
+  const i = Math.min(9, Math.floor(t)), f = t - i;
+  const a = DEUTAN[i], b = DEUTAN[i+1], m = new Float32Array(9);
+  for (let k = 0; k < 9; k++) m[k] = a[k] + (b[k] - a[k]) * f;
+  return new Float32Array([m[0],m[3],m[6], m[1],m[4],m[7], m[2],m[5],m[8]]); // transpose
+}
+
+// ---------------------------------------------------------------------------
+// GL
+// ---------------------------------------------------------------------------
+const VERT = `
+attribute vec2 aPos;
+varying vec2 vUV;
+uniform vec2 uScale;   // cover-fit correction
+uniform float uMirror;
+void main(){
+  vec2 uv = aPos * 0.5 + 0.5;
+  uv = (uv - 0.5) / uScale + 0.5;
+  uv.x = mix(uv.x, 1.0 - uv.x, uMirror);
+  vUV = vec2(uv.x, 1.0 - uv.y);
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const FRAG = `
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D uTex;
+uniform mat3 uSim;
+uniform int uMode;      // 0 off, 1 daltonize, 2 split, 3 simulate
+uniform float uAmt;
+
+vec3 toLinear(vec3 c){
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+vec3 toSRGB(vec3 c){
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+
+void main(){
+  vec3 src = texture2D(uTex, vUV).rgb;
+
+  if (uMode == 0) { gl_FragColor = vec4(src, 1.0); return; }
+
+  vec3 lin = toLinear(src);
+  vec3 sim = uSim * lin;                 // what a deutan retina actually receives
+
+  if (uMode == 3) { gl_FragColor = vec4(toSRGB(sim), 1.0); return; }
+
+  // Error = the information the deutan cone response throws away.
+  vec3 err = lin - sim;
+
+  if (uMode == 1) {
+    // Fidaner/Lin/Wheeler redistribution: push lost red-green energy onto the
+    // green and blue channels, which drive an intact blue-yellow opponent axis.
+    vec3 shift = vec3(
+      0.0,
+      0.7 * err.r + 1.0 * err.g,
+      0.7 * err.r + 1.0 * err.b
+    );
+    gl_FragColor = vec4(toSRGB(lin + shift * uAmt), 1.0);
+    return;
+  }
+
+  // Split: drive the surviving blue-yellow axis directly and hard, so a
+  // red-green confusion pair separates into unmistakable warm vs cool.
+  float d = err.r - err.g;                       // signed position on the lost axis
+  float luma = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+  vec3 out3 = lin;
+  out3.b += -d * 1.6 * uAmt;                     // reds -> yellow, greens -> blue
+  out3.r +=  d * 0.5 * uAmt;
+  out3 = mix(vec3(luma), out3, 1.0 + 0.35 * uAmt);   // widen remaining saturation
+  gl_FragColor = vec4(toSRGB(out3), 1.0);
+}`;
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", {alpha:false, antialias:false, preserveDrawingBuffer:true});
+const vid = document.getElementById("vid");
+const probe = document.getElementById("probe");
+const pctx = probe.getContext("2d", {willReadFrequently:true});
+
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(prog, "aPos");
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const U = {
+  tex: gl.getUniformLocation(prog, "uTex"),
+  sim: gl.getUniformLocation(prog, "uSim"),
+  mode: gl.getUniformLocation(prog, "uMode"),
+  amt: gl.getUniformLocation(prog, "uAmt"),
+  scale: gl.getUniformLocation(prog, "uScale"),
+  mirror: gl.getUniformLocation(prog, "uMirror"),
+};
+
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.uniform1i(U.tex, 0);
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const state = { mode: 1, sev: 0.90, amt: 1.0, frozen: false, facing: "environment" };
+let stream = null;
+
+function resize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resize);
+
+function coverScale(){
+  const vw = vid.videoWidth || 1, vh = vid.videoHeight || 1;
+  const va = vw / vh, ca = (canvas.width || 1) / (canvas.height || 1);
+  return va > ca ? [ca / va, 1] : [1, va / ca];   // crop the long edge
+}
+
+function draw(){
+  if (!state.frozen && vid.readyState >= 2) {
+    resize();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, vid);
+    const [sx, sy] = coverScale();
+    gl.uniform2f(U.scale, sx, sy);
+    gl.uniform1f(U.mirror, state.facing === "user" ? 1 : 0);
+    gl.uniformMatrix3fv(U.sim, false, simMatrix(state.sev));
+    gl.uniform1i(U.mode, state.mode);
+    gl.uniform1f(U.amt, state.amt);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  requestAnimationFrame(draw);
+}
+
+// ---------------------------------------------------------------------------
+// Colour naming — the part a filter can never do
+// ---------------------------------------------------------------------------
+function rgbToHsl(r, g, b){
+  r/=255; g/=255; b/=255;
+  const mx = Math.max(r,g,b), mn = Math.min(r,g,b), l = (mx+mn)/2;
+  if (mx === mn) return [0, 0, l];
+  const d = mx - mn;
+  const s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+  let h;
+  if (mx === r) h = ((g - b) / d + (g < b ? 6 : 0));
+  else if (mx === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+
+const HUES = [
+  [ 10, "red"], [ 20, "red-orange"], [ 35, "orange"], [ 48, "amber"],
+  [ 66, "yellow"], [ 80, "yellow-green"], [ 95, "lime green"], [ 150, "green"],
+  [ 168, "spring green"], [ 190, "teal"], [ 200, "cyan"], [ 238, "blue"],
+  [ 258, "indigo"], [ 285, "violet"], [ 320, "magenta"], [ 345, "pink-red"], [ 360, "red"],
+];
+
+function nameColor(r, g, b){
+  const [h, s, l] = rgbToHsl(r, g, b);
+  if (s < 0.10 || l < 0.06 || l > 0.96) {
+    if (l < 0.10) return "black";
+    if (l < 0.28) return "dark grey";
+    if (l < 0.55) return "grey";
+    if (l < 0.82) return "light grey";
+    return "white";
+  }
+  let base = "red";
+  for (const [edge, label] of HUES) { if (h < edge) { base = label; break; } }
+
+  // brown / tan: dark or muted oranges are their own perceptual category
+  if (h >= 10 && h < 50) {
+    if (l < 0.32) base = "brown";
+    else if (l < 0.52 && s < 0.65) base = "brown";
+    else if (l >= 0.52 && s < 0.55) base = "tan";
+  }
+  // pink: light reds and magentas
+  if ((h >= 330 || h < 12) && l > 0.66) base = "pink";
+  if (h >= 285 && h < 330 && l > 0.72) base = "pink";
+  // olive
+  if (h >= 50 && h < 90 && l < 0.38) base = "olive";
+  // navy
+  if (h >= 200 && h < 260 && l < 0.28) base = "navy";
+
+  let mod = "";
+  if (l < 0.26 && !["brown","olive","navy","black"].includes(base)) mod = "dark ";
+  else if (l > 0.78 && base !== "pink") mod = "pale ";
+  else if (s > 0.80 && l > 0.30 && l < 0.72) mod = "vivid ";
+  else if (s < 0.28) mod = "muted ";
+  return mod + base;
+}
+
+const hex2 = n => n.toString(16).padStart(2, "0");
+const elSwatch = document.getElementById("swatch");
+const elName = document.getElementById("name");
+const elHex = document.getElementById("hex");
+
+function sample(){
+  if (vid.readyState < 2) return;
+  const vw = vid.videoWidth, vh = vid.videoHeight;
+  const s = Math.max(8, Math.round(Math.min(vw, vh) * 0.045));   // centre patch
+  try {
+    pctx.drawImage(vid, (vw - s) / 2, (vh - s) / 2, s, s, 0, 0, 16, 16);
+  } catch { return; }
+  const d = pctx.getImageData(0, 0, 16, 16).data;
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i+1]; b += d[i+2]; }
+  const n = d.length / 4;
+  r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+  const css = `rgb(${r},${g},${b})`;
+  elSwatch.style.background = css;
+  elName.textContent = nameColor(r, g, b);
+  elHex.textContent = "#" + hex2(r) + hex2(g) + hex2(b);
+}
+setInterval(() => { if (!state.frozen) sample(); }, 180);
+
+// ---------------------------------------------------------------------------
+// Camera
+// ---------------------------------------------------------------------------
+const banner = document.getElementById("banner");
+function say(title, body){
+  banner.innerHTML = "<b>" + title + "</b>" + body;
+  banner.style.display = "block";
+}
+
+async function start(){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    elName.textContent = "no camera API";
+    return say("Camera unavailable",
+      "This browser exposes no camera API. Open the page over <code>https://</code> or on <code>localhost</code>.");
+  }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: {ideal: state.facing}, width: {ideal: 1920}, height: {ideal: 1080} },
+      audio: false
+    });
+    vid.srcObject = stream;
+    await vid.play();
+    banner.style.display = "none";
+  } catch (e) {
+    elName.textContent = "camera blocked";
+    say("Camera blocked (" + e.name + ")",
+      "Grant camera permission and reload. The page must be served over https or from localhost — " +
+      "browsers refuse camera access on plain http.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+const chips = [...document.querySelectorAll("#modes .chip")];
+chips.forEach(c => c.addEventListener("click", () => {
+  state.mode = +c.dataset.mode;
+  chips.forEach(o => o.setAttribute("aria-pressed", String(o === c)));
+}));
+
+const sev = document.getElementById("sev"), sevv = document.getElementById("sevv");
+sev.addEventListener("input", () => { state.sev = sev.value / 100; sevv.textContent = state.sev.toFixed(2); });
+const amt = document.getElementById("amt"), amtv = document.getElementById("amtv");
+amt.addEventListener("input", () => { state.amt = amt.value / 100; amtv.textContent = state.amt.toFixed(2); });
+
+const freeze = document.getElementById("freeze");
+freeze.addEventListener("click", () => {
+  state.frozen = !state.frozen;
+  freeze.textContent = state.frozen ? "Live" : "Freeze";
+  freeze.setAttribute("aria-pressed", String(state.frozen));
+});
+
+document.getElementById("flip").addEventListener("click", () => {
+  state.facing = state.facing === "environment" ? "user" : "environment";
+  start();
+});
+
+document.getElementById("shot").addEventListener("click", () => {
+  canvas.toBlob(b => {
+    if (!b) return;
+    const url = URL.createObjectURL(b);
+    const a = document.createElement("a");
+    a.href = url; a.download = "colorblind-" + state.mode + ".png";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }, "image/png");
+});
+
+document.getElementById("about").addEventListener("click", () => {
+  if (banner.style.display === "block") { banner.style.display = "none"; return; }
+  say("How this works",
+    "<b style='display:inline'>Daltonize</b> simulates what deutan cones receive, measures the " +
+    "red-green information that gets lost, and re-injects it on the blue-yellow axis you see normally. " +
+    "<br><br><b style='display:inline'>Split</b> pushes that same lost axis much harder — colours stop " +
+    "being true but confusion pairs separate hard.<br><br>" +
+    "<b style='display:inline'>Simulate</b> shows what a deutan retina receives — useful for showing " +
+    "other people.<br><br>The name under the reticle is read from the raw sensor pixels, " +
+    "so it is right regardless of what any filter does.");
+});
+
+resize();
+requestAnimationFrame(draw);
+start();
+})();
+</script>
+</body>
+</html>
