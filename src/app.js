@@ -174,12 +174,83 @@ function flash(text, ms = 1100) {
   toastTimer = setTimeout(() => { el.style.opacity = "0"; }, ms);
 }
 
+// ---------------------------------------------------------------------------
+// People
+//
+// Everything about the correction is per-person — type, severity, strength and
+// the calibration behind them — so more than one child (or a grown-up wanting
+// to compare) needs more than one profile. profiles.js has carried this from
+// the start; this is the UI for it, kept in the grown-ups sheet so the
+// kid-facing screen stays three chips.
+// ---------------------------------------------------------------------------
+const nextFreeLetter = () => {
+  const used = new Set(state.profiles.map((p) => (p.name || "").toUpperCase()));
+  for (const ch of "ZABCDEFGHIJKLMNOPQRSTUVWXY") if (!used.has(ch)) return ch;
+  return "?";
+};
+
+function switchTo(id) {
+  state = Profiles.setActive(state, id);
+  me = Profiles.active(state);
+  applyProfile();
+  syncSheet();
+  paintChrome();
+  paintReadout();
+  flash(`${(me.name || "?").toUpperCase()} — ${TYPES[me.type].label}`, 1600);
+}
+
+function paintPeople() {
+  const box = $("people");
+  box.textContent = "";
+  for (const p of state.profiles) {
+    const b = document.createElement("button");
+    b.textContent = (p.name || "?").slice(0, 2).toUpperCase();
+    b.style.background = p.avatarColor || BG[0];
+    b.setAttribute("aria-pressed", String(p.id === me.id));
+    b.setAttribute("aria-label", `Use ${p.name}'s settings`);
+    b.addEventListener("click", () => { if (p.id !== me.id) switchTo(p.id); });
+    box.appendChild(b);
+  }
+  if (state.profiles.length < 6) {
+    const add = document.createElement("button");
+    add.className = "add";
+    add.textContent = "+";
+    add.setAttribute("aria-label", "Add a person");
+    add.addEventListener("click", () => {
+      state = Profiles.add(state, nextFreeLetter());
+      me = Profiles.active(state);
+      applyProfile();
+      syncSheet();
+      paintChrome();
+      paintReadout();
+      $("letter").focus();
+      flash("New person added — set their letter and measure their eyes", 2400);
+    });
+    box.appendChild(add);
+  }
+  $("removeBtn").hidden = state.profiles.length < 2;
+}
+
+/** Push the active profile's values into the sheet's controls. */
+function syncSheet() {
+  $("type").value = me.type;
+  $("sev").value = me.severity;
+  $("sevLabel").textContent = me.severity.toFixed(2);
+  $("str").value = me.boost;
+  $("strLabel").textContent = me.boost.toFixed(2);
+  $("letter").value = me.name;
+  document.querySelectorAll("#bgs button").forEach((o, i) =>
+    o.setAttribute("aria-pressed", String((me.avatarColor || BG[0]) === BG[i])));
+  paintPeople();
+}
+
 function persist(patch) {
   state = Profiles.update(state, me.id, patch);
   me = Profiles.active(state);
   applyProfile();
   paintChrome();
   paintReadout();
+  paintPeople();
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +308,17 @@ const openSheet = (on) => {
 $("gear").addEventListener("click", () => openSheet(true));
 $("scrim").addEventListener("click", () => openSheet(false));
 $("doneBtn").addEventListener("click", () => openSheet(false));
+$("removeBtn").addEventListener("click", () => {
+  if (state.profiles.length < 2) return;
+  const gone = me.name;
+  state = Profiles.remove(state, me.id);
+  me = Profiles.active(state);
+  applyProfile();
+  syncSheet();
+  paintChrome();
+  paintReadout();
+  flash(`Removed ${gone}`, 1600);
+});
 
 $("letter").addEventListener("input", (e) =>
   persist({ name: (e.target.value || "Z").toUpperCase().slice(0, 2) }));
@@ -388,9 +470,7 @@ async function calibrate() {
 
   const patch = toEngineProfile(result);
   persist(patch);
-  $("type").value = patch.type;
-  $("sev").value = patch.severity;
-  $("sevLabel").textContent = patch.severity.toFixed(2);
+  syncSheet();
 
   // The reward is drawn from colours THIS profile can separate — it
   // demonstrates the point rather than decorating.
@@ -438,15 +518,7 @@ function boot() {
   }
   applyProfile();
 
-  $("type").value = me.type;
-  $("sev").value = me.severity;
-  $("sevLabel").textContent = me.severity.toFixed(2);
-  $("str").value = me.boost;
-  $("strLabel").textContent = me.boost.toFixed(2);
-  $("letter").value = me.name;
-  document.querySelectorAll("#bgs button").forEach((o, i) =>
-    o.setAttribute("aria-pressed", String((me.avatarColor || BG[0]) === BG[i])));
-
+  syncSheet();
   paintChrome();
   setInterval(sample, 140);
   requestAnimationFrame(frame);

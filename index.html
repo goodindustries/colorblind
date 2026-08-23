@@ -103,6 +103,14 @@
              font:700 25px/1 var(--sans);color:#141414;box-shadow:0 0 0 2px rgba(255,255,255,.2)}
   #letter{width:62px;padding:11px 0;text-align:center;border-radius:12px;border:1px solid rgba(255,255,255,.14);
           background:rgba(255,255,255,.05);color:#fff;font:600 17px/1 var(--sans);outline:none}
+  #people{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  #people button{width:44px;height:44px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+                 font:700 18px/1 var(--sans);color:#141414;box-shadow:0 0 0 1px rgba(255,255,255,.18)}
+  #people button[aria-pressed="true"]{box-shadow:0 0 0 3px #fff}
+  #people button.add{background:rgba(255,255,255,.07);color:#fff;font-weight:400;font-size:24px;
+                     box-shadow:0 0 0 1px rgba(255,255,255,.18)}
+  #removeBtn{margin-top:4px;padding:11px;border-radius:12px;background:rgba(255,255,255,.05);
+             border:1px solid rgba(255,255,255,.12);font:500 12px/1 var(--sans);color:rgba(255,255,255,.5)}
   #bgs{display:grid;grid-template-columns:repeat(3,28px);gap:8px}
   #bgs button{width:28px;height:28px;border-radius:9px;box-shadow:0 0 0 1px rgba(255,255,255,.18)}
   #bgs button[aria-pressed="true"]{box-shadow:0 0 0 2px #fff}
@@ -214,12 +222,20 @@
     <div id="sheetBody">
 
       <div class="row">
-        <div class="rowhead"><div class="label">PROFILE</div><div class="hint">their letter, their colour</div></div>
+        <div class="rowhead"><div class="label">WHO IS USING IT</div><div class="hint">each person keeps their own settings</div></div>
+        <div id="people"></div>
+      </div>
+
+      <div class="rule"></div>
+
+      <div class="row">
+        <div class="rowhead"><div class="label">THIS PERSON</div><div class="hint">their letter, their colour</div></div>
         <div style="display:flex;align-items:center;gap:14px">
           <div id="avatarBig">Z</div>
           <input id="letter" value="Z" maxlength="2" aria-label="Initial">
           <div id="bgs"></div>
         </div>
+        <button id="removeBtn" hidden>Remove this person</button>
       </div>
 
       <div class="rule"></div>
