@@ -93,6 +93,13 @@ vec3 mapToGamut(vec3 c){
 
 // Hard bound on hue rotation, so "orange stays orange" is a guarantee rather
 // than an average that happened to hold on the colours we tested.
+//
+// Reconstructing at the capped hue can land outside the RGB cube; mapToGamut
+// then scales chroma toward RGB luma, which is not hue-preserving in Lab and
+// can push hue back past the cap it was just set to. So back off chroma until
+// the hue actually measured after gamut-mapping is inside the cap, instead of
+// trusting one reconstruct-then-map pass (measured: 15% of the adaptive
+// optimiser's grid landed past the cap, worst case 20.7deg against 16deg).
 vec3 guardHue(vec3 o, vec3 ref, float capDeg){
   vec3 lo = toLab(o), lr = toLab(ref);
   float co = chromaOf(lo), cr = chromaOf(lr);
@@ -103,7 +110,22 @@ vec3 guardHue(vec3 o, vec3 ref, float capDeg){
   float cap = capDeg * PI / 180.0;
   if (abs(dh) <= cap) return o;
   float h = atan(lr.z, lr.y) + sign(dh) * cap;
-  return mapToGamut(fromLab(vec3(lo.x, co * cos(h), co * sin(h))));
+  vec2 dir = vec2(cos(h), sin(h));
+  // Fallback is the achromatic point at this lightness — chroma 0 means hue is
+  // undefined, which trivially satisfies any cap, so it is always a safe worst
+  // case rather than the unguarded (possibly over-cap) input.
+  float loT = 0.0, hiT = co;
+  vec3 best = mapToGamut(fromLab(vec3(lo.x, 0.0, 0.0)));
+  for (int i = 0; i < 12; i++) {
+    float mid = (loT + hiT) * 0.5;
+    vec3 cand = mapToGamut(fromLab(vec3(lo.x, dir * mid)));
+    vec3 lc = toLab(cand);
+    float dhc = atan(lc.z, lc.y) - atan(lr.z, lr.y);
+    if (dhc >  PI) dhc -= 2.0 * PI;
+    if (dhc < -PI) dhc += 2.0 * PI;
+    if (abs(dhc) <= cap) { best = cand; loT = mid; } else { hiT = mid; }
+  }
+  return best;
 }
 `;
 

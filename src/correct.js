@@ -114,6 +114,14 @@ export function mapToGamut(c) {
 }
 
 // --- hue guard: hard cap on hue rotation in Lab, preserving L and chroma ---
+//
+// Reconstructing a capped-hue point from Lab can itself land outside the RGB
+// cube, so it is fed through mapToGamut — but mapToGamut scales chroma toward
+// RGB luma, which is not a hue-preserving move in Lab. That could silently
+// push hue back past the cap it was just set to (measured: 15% of the
+// adaptive optimiser's grid, worst case 20.7deg against a 16deg cap). So the
+// cap is enforced as a true bound: back off chroma in RGB-gamut space until
+// the hue actually measured after gamut-mapping is inside the cap.
 export function guardHue(out, ref, capDeg) {
   const lo = toLab(out), lr = toLab(ref);
   if (chromaOf(lr) < 4 || chromaOf(lo) < 4) return out;      // near-neutral: hue undefined
@@ -121,8 +129,21 @@ export function guardHue(out, ref, capDeg) {
   while (dh > Math.PI) dh -= 2*Math.PI; while (dh < -Math.PI) dh += 2*Math.PI;
   const cap = capDeg * Math.PI / 180;
   if (Math.abs(dh) <= cap) return out;
-  const h = hueOf(lr) + Math.sign(dh) * cap, C = chromaOf(lo);
-  return mapToGamut(fromLab([lo[0], C * Math.cos(h), C * Math.sin(h)]));
+  const h = hueOf(lr) + Math.sign(dh) * cap;
+  const target = [lo[0], Math.cos(h), Math.sin(h)]; // unit chroma direction at the capped hue
+  // Fallback is the achromatic point at this lightness — chroma 0 means hue is
+  // undefined, which trivially satisfies any cap, so it is always a safe worst
+  // case rather than the unguarded (possibly over-cap) input.
+  let lo_t = 0, hi_t = chromaOf(lo), best = mapToGamut(fromLab([lo[0], 0, 0]));
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo_t + hi_t) / 2;
+    const cand = mapToGamut(fromLab([lo[0], target[1] * mid, target[2] * mid]));
+    const lc = toLab(cand);
+    let dhc = hueOf(lc) - hueOf(lr);
+    while (dhc > Math.PI) dhc -= 2*Math.PI; while (dhc < -Math.PI) dhc += 2*Math.PI;
+    if (Math.abs(dhc) <= cap) { best = cand; lo_t = mid; } else hi_t = mid;
+  }
+  return best;
 }
 
 // --- set luminance of c to Y without changing chromaticity ----------------

@@ -329,14 +329,19 @@ export function assist(lin, profile, boost = 0.5, style = "natural") {
   // to 17% of random colours did exactly that, which is a worse artefact than
   // the hue rotation it replaced. So: back the correction off until enough
   // chroma survives. Most pixels never enter the loop.
+  //
+  // Chroma is checked here BEFORE the hue guard runs, but the hue guard can
+  // itself give up chroma to hold the cap — so a boost that clears the floor
+  // pre-guard can still arrive grey post-guard. Checked post-guard too, so the
+  // backoff search sees what the pixel will actually ship as.
   const c0 = chromaOf(toLab(lin));
-  if (c0 < 4 || chromaOf(toLab(full)) >= CHROMA_FLOOR * c0) return bound(full);
+  if (c0 < 4 || chromaOf(toLab(bound(full))) >= CHROMA_FLOOR * c0) return bound(full);
 
   let lo = 0, hi = 1, best = full;
   for (let i = 0; i < 6; i++) {
     const mid = (lo + hi) / 2;
     const out = mapToGamut(rawTarget(lin, profile, boost * mid, style));
-    if (chromaOf(toLab(out)) >= CHROMA_FLOOR * c0) { lo = mid; best = out; } else hi = mid;
+    if (chromaOf(toLab(bound(out))) >= CHROMA_FLOOR * c0) { lo = mid; best = out; } else hi = mid;
   }
   return bound(best);
 }
@@ -453,8 +458,27 @@ export function guardHue(out, ref, capDeg) {
   while (dh < -Math.PI) dh += 2 * Math.PI;
   const cap = capDeg * Math.PI / 180;
   if (Math.abs(dh) <= cap) return out;
-  const h = hueOf(lr) + Math.sign(dh) * cap, ch = chroma(lo);
-  return mapToGamut(fromLab([lo[0], ch * Math.cos(h), ch * Math.sin(h)]));
+  // Reconstructing at the capped hue can land outside the RGB cube; mapToGamut
+  // then scales chroma toward RGB luma, which is not hue-preserving in Lab and
+  // can push hue back past the cap it was just set to. So back off chroma
+  // until the hue actually measured after gamut-mapping is inside the cap,
+  // instead of trusting one reconstruct-then-map pass.
+  const h = hueOf(lr) + Math.sign(dh) * cap;
+  const dir = [Math.cos(h), Math.sin(h)];
+  // Fallback is the achromatic point at this lightness — chroma 0 means hue is
+  // undefined, which trivially satisfies any cap, so it is always a safe worst
+  // case rather than the unguarded (possibly over-cap) input.
+  let loT = 0, hiT = chroma(lo), best = mapToGamut(fromLab([lo[0], 0, 0]));
+  for (let i = 0; i < 20; i++) {
+    const mid = (loT + hiT) / 2;
+    const cand = mapToGamut(fromLab([lo[0], dir[0] * mid, dir[1] * mid]));
+    const lc = toLab(cand);
+    let dhc = hueOf(lc) - hueOf(lr);
+    while (dhc > Math.PI) dhc -= 2 * Math.PI;
+    while (dhc < -Math.PI) dhc += 2 * Math.PI;
+    if (Math.abs(dhc) <= cap) { best = cand; loT = mid; } else hiT = mid;
+  }
+  return best;
 }
 
 /** Round-trip a corrected colour through the display and back into the eye. */

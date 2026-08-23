@@ -38,12 +38,16 @@ const withLuma = (c, Y) => { const y0 = luma(c); return y0 < 1e-6 ? [Y, Y, Y] : 
  */
 // Learned from a corpus rather than chosen — see tools/train.mjs. Mutable so
 // the trainer can sweep them; the app never changes them at runtime.
-// Swept over a 26-image corpus (tools/train.mjs). Harm falls steeply with the
-// penalty and then plateaus around 10% at penalty 20, while gain starts to
-// slide — so the knee is here, not at the edge where the first sweep stopped.
-//   natural  x1.14 gain, 42% of pairs made worse
-//   split    x1.53 gain, 26% made worse
-//   adaptive x1.38 gain, 10% made worse (7% of frame)
+// Swept over 15 real photographs + 24 generated scenes (tools/train.mjs) —
+// the first sweep behind this file used generated scenes only, and the
+// corpus README already warned real photos disagree with them. Harm falls
+// steeply with the penalty and then plateaus around 13% at penalty 20, while
+// gain starts to slide — so the knee is still here, just at a higher harm
+// floor than the synthetic-only sweep found:
+//   natural    x1.14 gain, 40% of pairs made worse
+//   achromatic x1.01 gain, 43% made worse
+//   split      x1.49 gain, 26% made worse
+//   adaptive   x1.39 gain, 13% made worse (11% of frame)
 let FLOOR = 5;      // below this, two colours cannot be told apart at all
 let CEIL = 35;      // above this, more separation buys nothing
 let HARM = 20;      // losing usable separation vs gaining it
