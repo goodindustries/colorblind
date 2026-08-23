@@ -299,31 +299,88 @@ export const correctionFor = (type, style = "natural") =>
  * @param {object}   profile  {type, severity}
  * @param {number}   boost    0 = untouched, 1 = maximum separation
  */
-export function assist(lin, profile, boost = 0.5, style = "natural") {
+const chromaOf = (lab) => Math.hypot(lab[1], lab[2]);
+
+/** The correction before any gamut handling. */
+function rawTarget(lin, profile, boost, style) {
   const c = correctionFor(profile.type, style);
-  if (!c || boost <= 0) return lin.slice();
   const sim = simulate(lin, profile);
   const err = [lin[0] - sim[0], lin[1] - sim[1], lin[2] - sim[2]];
   const pick = CORRECTION_MAX[profile.type].pick;   // the lost axis, per type
   const d = err[0] * pick[0] + err[1] * pick[1] + err[2] * pick[2];
   const y = luma(lin);
   const k = 1 + c.sat * boost;
-  const target = lin.map((v, i) => {
+  return lin.map((v, i) => {
     const shifted = v + d * c.push[i] * boost;
     return y + (shifted - y) * k;
   });
+}
 
-  // Gamut handling: plain clipping, deliberately. Two smarter strategies were
-  // measured and both lost — scaling back along the correction ray collapses
-  // p10 gain from ~5x to 1.0x (any colour already touching a channel boundary
-  // gets zero correction), and tanh soft-clipping matches plain clipping to
-  // within 0.1x while lifting black. See src/optimize.mjs for the comparison.
-  //
-  // The residual cost is a small tail — roughly 2-4% of confusion pairs, all
-  // already near the gamut edge — where correction still loses to clipping.
-  // That tail is irreducible without a wider gamut; Display P3 is the real fix
-  // and is the top item in SCIENCE.md.
-  return target;
+export function assist(lin, profile, boost = 0.5, style = "natural") {
+  const c = correctionFor(profile.type, style);
+  if (!c || boost <= 0) return lin.slice();
+
+  const full = mapToGamut(rawTarget(lin, profile, boost, style));
+  const bound = (out) => (style === "max" ? out : guardHue(out, lin, HUE_CAP_DEG));
+
+  // Gamut mapping scales chroma toward luminance, which is what stops clipping
+  // from rotating hue. But on strongly saturated colours the correction can
+  // push so far out that the scale collapses and the colour arrives GREY — 8%
+  // to 17% of random colours did exactly that, which is a worse artefact than
+  // the hue rotation it replaced. So: back the correction off until enough
+  // chroma survives. Most pixels never enter the loop.
+  const c0 = chromaOf(toLab(lin));
+  if (c0 < 4 || chromaOf(toLab(full)) >= CHROMA_FLOOR * c0) return bound(full);
+
+  let lo = 0, hi = 1, best = full;
+  for (let i = 0; i < 6; i++) {
+    const mid = (lo + hi) / 2;
+    const out = mapToGamut(rawTarget(lin, profile, boost * mid, style));
+    if (chromaOf(toLab(out)) >= CHROMA_FLOOR * c0) { lo = mid; best = out; } else hi = mid;
+  }
+  return bound(best);
+}
+
+/**
+ * Keep at least this fraction of a colour's original chroma.
+ * 0.40 is the measured knee: it takes grey collapses from 88 of 494 random
+ * colours to zero, while median separation only moves x11.2 -> x8.3. Raising
+ * it further buys nothing (greys are already gone) and costs separation fast.
+ */
+export const CHROMA_FLOOR = 0.40;
+
+export const HUE_CAP_DEG = 16;
+
+/** Rescale a colour to a target luminance without touching its chromaticity. */
+function withLuma(c, Y) {
+  const y0 = luma(c);
+  if (y0 < 1e-6) return [Y, Y, Y];
+  return c.map((v) => v * Y / y0);
+}
+
+/**
+ * Brightness mode. The lost signal is encoded as a luminance offset and
+ * nothing else — hue and saturation are untouched, so hue error is exactly
+ * zero by construction rather than by tuning. Confusable colours separate as
+ * lighter/darker instead of as different hues.
+ *
+ * Bounds matter here: the factor is held to [0.5x, 2x] so dark colours never
+ * fall into the region where hue is undefined, and brightening is capped at
+ * what the chromaticity can actually reach in gamut (a saturated yellow cannot
+ * get lighter without turning white).
+ */
+export function brighten(lin, profile, boost = 0.5) {
+  const c = CORRECTION_MAX[profile.type];
+  if (!c || boost <= 0) return lin.slice();
+  const sim = simulate(lin, profile);
+  const err = [lin[0] - sim[0], lin[1] - sim[1], lin[2] - sim[2]];
+  const d = err[0] * c.pick[0] + err[1] * c.pick[1] + err[2] * c.pick[2];
+  const Y = luma(lin);
+  const f = Math.max(0.5, Math.min(2, Math.pow(2, d * 4 * boost)));
+  const yMax = Y / Math.max(lin[0], lin[1], lin[2], 1e-6);
+  let Y2 = Math.max(0.02, Y * f);
+  if (Y2 > Y) Y2 = Math.min(Y2, Math.max(Y, yMax * 0.995));
+  return mapToGamut(withLuma(lin, Y2));
 }
 
 // ---------------------------------------------------------------------------
@@ -344,12 +401,67 @@ export function toLab(lin) {
   return [116 * xyz[1] - 16, 500 * (xyz[0] - xyz[1]), 200 * (xyz[1] - xyz[2])];
 }
 
+export function fromLab([L, a, b]) {
+  const fy = (L + 16) / 116, fx = a / 500 + fy, fz = fy - b / 200;
+  const fi = (t) => (t > 0.206893 ? t * t * t : (t - 16 / 116) / 7.787);
+  const X = fi(fx) * WHITE[0], Y = fi(fy) * WHITE[1], Z = fi(fz) * WHITE[2];
+  return [ 3.2406 * X - 1.5372 * Y - 0.4986 * Z,
+          -0.9689 * X + 1.8758 * Y + 0.0415 * Z,
+           0.0557 * X - 0.2040 * Y + 1.0570 * Z ];
+}
+
 /** CIE76 deltaE. Crude next to CIEDE2000, but monotonic and enough to rank. */
 export const deltaE = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+// ---------------------------------------------------------------------------
+// Gamut mapping and the hue bound
+//
+// Clipping each channel independently ROTATES HUE — that is mechanically how
+// an orange became purple: its red channel hit 1.0 and stopped while blue kept
+// climbing. Scaling chroma toward the pixel's own luminance instead brings a
+// colour back into gamut along a line of constant hue.
+//
+// Measured against per-channel clipping, on colours the optimiser never saw:
+// worst-case hue error 25deg -> 13deg, separation median x3.55 -> x4.13, and
+// pairs made worse 2.0% -> 0%. Strictly better on every type and metric.
+// ---------------------------------------------------------------------------
+
+export function mapToGamut(c) {
+  const Y = Math.max(0, Math.min(1, luma(c)));
+  let t = 1;
+  for (let i = 0; i < 3; i++) {
+    const d = c[i] - Y;
+    if (c[i] > 1 && d > 0) t = Math.min(t, (1 - Y) / d);
+    if (c[i] < 0 && d < 0) t = Math.min(t, (0 - Y) / d);
+  }
+  return c.map((v) => Y + (v - Y) * Math.max(0, t));
+}
+
+/**
+ * Hard cap on hue rotation, in Lab, preserving lightness and chroma.
+ * On everything measured so far the gamut map already keeps hue inside the cap,
+ * so this never fires — which is the point. It turns "orange stays orange" from
+ * an observed average into a guarantee that holds on frames nobody tested.
+ */
+export function guardHue(out, ref, capDeg) {
+  const lo = toLab(out), lr = toLab(ref);
+  const chroma = (l) => Math.hypot(l[1], l[2]);
+  if (chroma(lr) < 4 || chroma(lo) < 4) return out;   // hue is undefined near neutral
+  const hueOf = (l) => Math.atan2(l[2], l[1]);
+  let dh = hueOf(lo) - hueOf(lr);
+  while (dh > Math.PI) dh -= 2 * Math.PI;
+  while (dh < -Math.PI) dh += 2 * Math.PI;
+  const cap = capDeg * Math.PI / 180;
+  if (Math.abs(dh) <= cap) return out;
+  const h = hueOf(lr) + Math.sign(dh) * cap, ch = chroma(lo);
+  return mapToGamut(fromLab([lo[0], ch * Math.cos(h), ch * Math.sin(h)]));
+}
+
 /** Round-trip a corrected colour through the display and back into the eye. */
 export function asSeen(lin, profile, boost, style = "natural") {
-  const shown = boost == null ? lin : assist(lin, profile, boost, style);
+  const shown = boost == null ? lin
+    : style === "bright" ? brighten(lin, profile, boost)
+    : assist(lin, profile, boost, style);
   const clipped = toLinear(toSrgb(shown)); // the display cannot show out-of-gamut
   return simulate(clipped, profile);
 }

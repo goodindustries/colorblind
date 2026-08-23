@@ -8,9 +8,9 @@
  * drift away from the CPU path the tests cover.
  */
 
-import { TYPES, machadoMatrix, correctionFor, brettelParams } from "./engine.js";
+import { TYPES, machadoMatrix, correctionFor, brettelParams, HUE_CAP_DEG, CHROMA_FLOOR } from "./engine.js";
 
-export const MODE = { NORMAL: 0, ASSIST: 1, SIMULATE: 2, BOOST: 3 };
+export const MODE = { NORMAL: 0, ASSIST: 1, SIMULATE: 2, BOOST: 3, BRIGHT: 4 };
 
 const VERT = `
 attribute vec2 aPos;
@@ -33,12 +33,68 @@ uniform int uMode;
 uniform float uBoost;
 uniform float uDim;
 
+const float PI = 3.14159265;
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
 vec3 toLinear(vec3 c){
   return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
 vec3 toSRGB(vec3 c){
   c = clamp(c, 0.0, 1.0);
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+
+// GLSL mat3 constructors are column-major.
+const mat3 RGB2XYZ = mat3(0.4124564, 0.2126729, 0.0193339,
+                          0.3575761, 0.7151522, 0.1191920,
+                          0.1804375, 0.0721750, 0.9503041);
+const mat3 XYZ2RGB = mat3( 3.2406, -0.9689,  0.0557,
+                          -1.5372,  1.8758, -0.2040,
+                          -0.4986,  0.0415,  1.0570);
+const vec3 WHITE = vec3(0.95047, 1.0, 1.08883);
+
+vec3 toLab(vec3 lin){
+  vec3 n = (RGB2XYZ * lin) / WHITE;
+  n = max(n, vec3(0.0));
+  vec3 f = mix(7.787 * n + 16.0/116.0, pow(n, vec3(1.0/3.0)), step(vec3(0.008856), n));
+  return vec3(116.0 * f.y - 16.0, 500.0 * (f.x - f.y), 200.0 * (f.y - f.z));
+}
+vec3 fromLab(vec3 lab){
+  float fy = (lab.x + 16.0) / 116.0;
+  vec3 f = vec3(lab.y / 500.0 + fy, fy, fy - lab.z / 200.0);
+  vec3 n = mix((f - 16.0/116.0) / 7.787, f * f * f, step(vec3(0.206893), f));
+  return XYZ2RGB * (n * WHITE);
+}
+float chromaOf(vec3 lab){ return length(lab.yz); }
+
+// Scale chroma toward the pixel's own luminance. Clipping each channel
+// separately rotates hue — that is exactly how an orange became purple.
+vec3 mapToGamut(vec3 c){
+  float Y = clamp(dot(c, LUMA), 0.0, 1.0);
+  vec3 d = c - vec3(Y);
+  float t = 1.0;
+  if (c.r > 1.0 && d.r > 0.0) t = min(t, (1.0 - Y) / d.r);
+  if (c.g > 1.0 && d.g > 0.0) t = min(t, (1.0 - Y) / d.g);
+  if (c.b > 1.0 && d.b > 0.0) t = min(t, (1.0 - Y) / d.b);
+  if (c.r < 0.0 && d.r < 0.0) t = min(t, -Y / d.r);
+  if (c.g < 0.0 && d.g < 0.0) t = min(t, -Y / d.g);
+  if (c.b < 0.0 && d.b < 0.0) t = min(t, -Y / d.b);
+  return vec3(Y) + d * max(t, 0.0);
+}
+
+// Hard bound on hue rotation, so "orange stays orange" is a guarantee rather
+// than an average that happened to hold on the colours we tested.
+vec3 guardHue(vec3 o, vec3 ref, float capDeg){
+  vec3 lo = toLab(o), lr = toLab(ref);
+  float co = chromaOf(lo), cr = chromaOf(lr);
+  if (cr < 4.0 || co < 4.0) return o;      // hue undefined near the neutral axis
+  float dh = atan(lo.z, lo.y) - atan(lr.z, lr.y);
+  if (dh >  PI) dh -= 2.0 * PI;
+  if (dh < -PI) dh += 2.0 * PI;
+  float cap = capDeg * PI / 180.0;
+  if (abs(dh) <= cap) return o;
+  float h = atan(lr.z, lr.y) + sign(dh) * cap;
+  return mapToGamut(fromLab(vec3(lo.x, co * cos(h), co * sin(h))));
 }
 `;
 
@@ -77,32 +133,80 @@ function simulateGLSL(profile) {
 export function buildFragment(profile) {
   const nat = correctionFor(profile.type, "natural");
   const max = correctionFor(profile.type, "max");
+  const passthrough = !nat;
 
-  // One body, two constant sets. `natural` keeps hues recognisable; `max`
-  // drops that constraint for maximum separation.
-  const body = (c) => c
-    ? `vec3 sim = simulate(lin);
-       vec3 err = lin - sim;
-       float d = dot(err, ${glslVec(max.pick)});
-       float y = dot(lin, vec3(0.2126, 0.7152, 0.0722));
-       float k = 1.0 + ${c.sat.toFixed(4)} * uBoost;
-       vec3 t = lin + d * ${glslVec(c.push)} * uBoost;
-       return y + (t - y) * k;`
-    // Monochromacy has no axis to move information onto. Returning the input
-    // unchanged is the honest answer; SCIENCE.md §3 covers what helps instead.
-    : `return lin;`;
+  // Monochromacy has no axis to move information onto. A passthrough is the
+  // honest answer; SCIENCE.md covers what helps instead.
+  if (passthrough) {
+    return `${HEAD}
+${simulateGLSL(profile)}
+void main(){
+  vec3 lin = toLinear(texture2D(uTex, vUV).rgb);
+  vec3 outv = (uMode == 2) ? simulate(lin) : lin;
+  gl_FragColor = vec4(toSRGB(outv) * uDim, 1.0);
+}`;
+  }
+
+  const PICK = glslVec(max.pick);
+  const target = (name, c) => `
+vec3 ${name}(vec3 lin, float boost){
+  vec3 sim = simulate(lin);
+  float d = dot(lin - sim, ${PICK});
+  float y = dot(lin, LUMA);
+  float k = 1.0 + ${c.sat.toFixed(4)} * boost;
+  vec3 t = lin + d * ${glslVec(c.push)} * boost;
+  return vec3(y) + (t - vec3(y)) * k;
+}`;
+
+  // Back the correction off until enough chroma survives the gamut map.
+  // Without this, strongly saturated colours arrive GREY — 88 of 494 random
+  // colours did, which is a worse artefact than the hue rotation it replaced.
+  // Most pixels skip the loop entirely.
+  const solve = (name, raw, bound) => `
+vec3 ${name}(vec3 lin){
+  vec3 full = mapToGamut(${raw}(lin, uBoost));
+  float c0 = chromaOf(toLab(lin));
+  vec3 best = full;
+  if (c0 >= 4.0 && chromaOf(toLab(full)) < ${CHROMA_FLOOR.toFixed(3)} * c0) {
+    float lo = 0.0, hi = 1.0;
+    for (int i = 0; i < 6; i++) {
+      float mid = (lo + hi) * 0.5;
+      vec3 o = mapToGamut(${raw}(lin, uBoost * mid));
+      if (chromaOf(toLab(o)) >= ${CHROMA_FLOOR.toFixed(3)} * c0) { lo = mid; best = o; }
+      else hi = mid;
+    }
+  }
+  return ${bound ? `guardHue(best, lin, ${HUE_CAP_DEG.toFixed(1)})` : "best"};
+}`;
 
   return `${HEAD}
 ${simulateGLSL(profile)}
-vec3 assistNatural(vec3 lin){ ${body(nat)} }
-vec3 assistMax(vec3 lin){ ${body(max)} }
+${target("rawNatural", nat)}
+${target("rawMax", max)}
+${solve("assistNatural", "rawNatural", true)}
+${solve("assistMax", "rawMax", false)}
+
+// Brightness: the lost signal encoded purely as lighter/darker. Hue and
+// saturation are untouched, so hue error is exactly zero by construction.
+vec3 brighten(vec3 lin){
+  vec3 sim = simulate(lin);
+  float d = dot(lin - sim, ${PICK});
+  float Y = dot(lin, LUMA);
+  float f = clamp(pow(2.0, d * 4.0 * uBoost), 0.5, 2.0);
+  float yMax = Y / max(max(lin.r, max(lin.g, lin.b)), 1e-6);
+  float Y2 = max(0.02, Y * f);
+  if (Y2 > Y) Y2 = min(Y2, max(Y, yMax * 0.995));
+  vec3 scaled = (Y < 1e-6) ? vec3(Y2) : lin * (Y2 / Y);
+  return mapToGamut(scaled);
+}
+
 void main(){
-  vec3 src = texture2D(uTex, vUV).rgb;
-  vec3 lin = toLinear(src);
+  vec3 lin = toLinear(texture2D(uTex, vUV).rgb);
   vec3 outv = lin;
   if (uMode == 1) outv = assistNatural(lin);
   else if (uMode == 2) outv = simulate(lin);
   else if (uMode == 3) outv = assistMax(lin);
+  else if (uMode == 4) outv = brighten(lin);
   // Photophobic profiles dim instead of brightening — see displayPolicy().
   gl_FragColor = vec4(toSRGB(outv) * uDim, 1.0);
 }`;

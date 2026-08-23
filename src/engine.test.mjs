@@ -217,7 +217,30 @@ for (const type of ALL) {
 }
 
 // ---------------------------------------------------------------------------
-H("7c. MAX mode still separates harder than natural  (that is its whole job)");
+H("7c. Every mode clears the baseline, and brightness never touches hue");
+// Brightness encodes the lost signal purely as lighter/darker, so its hue
+// error is zero BY CONSTRUCTION, not by tuning. It trades separation for never
+// telling the user a colour is something it is not.
+for (const type of ALL) {
+  if (!E.TYPES[type].axis) continue;
+  const prof = P(type, 0.9);
+  let worst = 0;
+  for (const [, rgb] of EVERYDAY) {
+    const lin = E.from255(rgb);
+    worst = Math.max(worst, hueShift(E.toLab(lin), E.toLab(E.brighten(lin, prof, 0.6))));
+  }
+  ok(`${type.padEnd(22)} brightness hue is exactly 0`, worst < 0.5, `${worst.toFixed(2)}deg`);
+}
+for (const type of ALL) {
+  if (!E.TYPES[type].axis) continue;
+  const prof = P(type, 0.9);
+  let bad = 0;
+  for (const [, rgb] of EVERYDAY) {
+    const out = E.brighten(E.from255(rgb), prof, 1);
+    if (out.some((v) => v < -1e-9 || v > 1 + 1e-9)) bad++;
+  }
+  ok(`${type.padEnd(22)} brightness stays in gamut`, bad === 0);
+}
 for (const type of ["deuteranomaly", "protanopia", "tritanopia"]) {
   const med = (style) => {
     const g = [];
@@ -230,9 +253,45 @@ for (const type of ["deuteranomaly", "protanopia", "tritanopia"]) {
     g.sort((x, y) => x - y);
     return g[Math.floor(g.length / 2)];
   };
-  const n = med("natural"), m = med("max");
-  ok(`${type.padEnd(22)} max > natural separation`, m > n, `max x${m.toFixed(1)} vs natural x${n.toFixed(1)}`);
-  ok(`${type.padEnd(22)} natural still helps`, n > 2.5, `x${n.toFixed(1)}`);
+  const n = med("natural"), m = med("max"), b = med("bright");
+  // Once gamut mapping stopped clipping (and so stopped rotating hue), max lost
+  // its across-the-board edge: it now beats natural on only half the types,
+  // for 3-9x the hue error. Both must clear the baseline; neither always wins.
+  ok(`${type.padEnd(22)} all three modes help`, n > 2.5 && m > 2.5 && b > 1.5,
+     `natural x${n.toFixed(1)}  max x${m.toFixed(1)}  bright x${b.toFixed(1)}`);
+}
+
+// ---------------------------------------------------------------------------
+H("7d. Gamut and hue bounds hold on colours nothing was tuned against");
+// Per-channel clipping is what rotated orange into purple: red pinned at 1.0
+// while blue kept climbing. Scaling chroma toward luminance cannot do that.
+{
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const WILD = Array.from({ length: 400 }, () => [rnd() * 255 | 0, rnd() * 255 | 0, rnd() * 255 | 0]);
+  for (const type of ["deuteranomaly", "protanopia", "tritanopia"]) {
+    const prof = P(type, 0.9);
+    const chroma = (l) => Math.hypot(l[1], l[2]);
+    let worstHue = 0, outOfGamut = 0, greyed = 0, worstKeep = 1, n = 0;
+    for (const rgb of WILD) {
+      const lin = E.from255(rgb);
+      const out = E.assist(lin, prof, 1, "natural");
+      if (out.some((v) => v < -1e-6 || v > 1 + 1e-6)) outOfGamut++;
+      const ci = chroma(E.toLab(lin)), co = chroma(E.toLab(out));
+      if (ci < 8) continue;              // hue is undefined near the neutral axis
+      n++;
+      if (co < 4) greyed++; else {
+        worstHue = Math.max(worstHue, hueShift(E.toLab(lin), E.toLab(out)));
+        worstKeep = Math.min(worstKeep, co / ci);
+      }
+    }
+    ok(`${type.padEnd(22)} 400 unseen colours in gamut`, outOfGamut === 0, `${outOfGamut} escaped`);
+    ok(`${type.padEnd(22)} hue bound holds unseen`, worstHue <= E.HUE_CAP_DEG + 0.5,
+       `worst ${worstHue.toFixed(1)}deg over ${n} chromatic colours, cap ${E.HUE_CAP_DEG}`);
+    ok(`${type.padEnd(22)} no colour turns grey`, greyed === 0, `${greyed}/${n} greyed`);
+    ok(`${type.padEnd(22)} chroma floor respected`, worstKeep >= E.CHROMA_FLOOR - 0.05,
+       `worst kept ${(worstKeep * 100).toFixed(0)}%`);
+  }
 }
 
 // ---------------------------------------------------------------------------

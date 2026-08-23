@@ -266,6 +266,53 @@ default mode against 35° for the boost mode.
 And for the cases where none of this is enough, the colour name under the
 reticle is read from the raw sensor and is simply correct.
 
+## 5b. What clipping was really doing
+
+Two changes came out of an external correction model, and both were measured
+against the existing one before adoption.
+
+**Per-channel clipping rotates hue.** That is the actual mechanism behind Z's
+orange: its red channel pinned at 1.0 while blue kept climbing, so the hue
+swung. Scaling chroma toward the pixel's own luminance instead brings a colour
+back into gamut *along a line of constant hue*. Measured on 400 colours the
+optimiser never saw:
+
+| | worst hue error | separation | pairs made worse |
+|---|---:|---:|---:|
+| per-channel clipping | 25° | ×3.55 | 2.0% |
+| chroma-toward-luminance | **13°** | **×4.13** | **0%** |
+
+Strictly better on every type and every metric.
+
+**But it introduced a worse artefact.** On strongly saturated colours the
+correction pushes so far out of gamut that the scale factor collapses and the
+colour arrives **grey** — 88 of 494 random colours did. A green turning grey is
+worse than a green shifting hue. The fix is to back the correction off until
+enough chroma survives, and the floor was chosen by measuring rather than taste:
+
+| chroma floor | greys | median separation |
+|---:|---:|---:|
+| none | 88 / 494 | ×11.2 |
+| **0.40** | **0** | **×8.3** |
+| 0.75 | 0 | ×5.1 |
+
+0.40 is the knee — it removes every grey collapse, and raising it further buys
+nothing while costing separation fast.
+
+**A hue bound on top.** A hard cap in Lab (16°) now makes "orange stays orange"
+a guarantee rather than an average that held on the colours we happened to
+test. On everything measured it never fires — the gamut map already keeps hue
+inside it — which is exactly what a safety bound should look like.
+
+**And a third mode.** Encoding the lost signal purely as lighter/darker gives
+**exactly zero** hue error by construction. It separates less (×1.7–3.4 against
+×3.8–11.2) but never tells anyone a colour is something it is not.
+
+One consequence worth noting: once clipping stopped rotating hue, the
+false-colour mode lost its across-the-board edge. It now beats the default on
+only half the deficiency types, for 3–9× the hue error — so it moved off the
+main screen into a toggle.
+
 ## 6. Where the field is going
 
 **Gene therapy is the actual cure trajectory.** Mancuso et al. (*Nature*, 2009,

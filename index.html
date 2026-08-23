@@ -114,6 +114,9 @@
   #camBtn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13)}
   #doneBtn{background:var(--accent);color:#141414}
   #note{font:400 11px/1.5 var(--sans);color:rgba(255,255,255,.3)}
+  #falseBtn{padding:14px;border-radius:14px;background:rgba(255,255,255,.07);
+            border:1px solid rgba(255,255,255,.13);font:600 13px/1 var(--sans)}
+  #falseBtn[aria-pressed="true"]{background:#ff6b35;border-color:#ff6b35;color:#141414}
 
   /* ---- camera gate: only shown if the on-load request does not succeed ---- */
   #gate{position:absolute;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:28px;
@@ -167,7 +170,7 @@
       <button class="mode" data-mode="0" aria-pressed="true"><span class="chip"></span><span class="ico" id="ico0">Z</span></button>
       <button class="mode" data-mode="1" aria-pressed="false"><span class="chip"></span><span class="ico">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6">
-          <path d="M9 2.2v13.6M2.2 9h13.6"/><path d="M4.2 4.2l9.6 9.6M13.8 4.2l-9.6 9.6" opacity=".55"/></svg></span></button>
+          <circle cx="9" cy="9" r="3.4"/><path d="M9 1.4v2.2M9 14.4v2.2M1.4 9h2.2M14.4 9h2.2M3.6 3.6l1.6 1.6M12.8 12.8l1.6 1.6M14.4 3.6l-1.6 1.6M5.2 12.8l-1.6 1.6"/></svg></span></button>
       <button class="mode" data-mode="2" aria-pressed="false"><span class="chip"></span><span class="ico">
         <svg width="20" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M1.6 10S4.8 4.6 10 4.6 18.4 10 18.4 10 15.2 15.4 10 15.4 1.6 10 1.6 10z"/><circle cx="10" cy="10" r="2.4"/></svg></span></button>
@@ -217,6 +220,13 @@
       <div class="row">
         <div class="rowhead"><div class="label">STRENGTH</div><div class="val" id="strLabel">0.60</div></div>
         <input id="str" type="range" min="0" max="1" step="0.02" value="0.6">
+      </div>
+
+      <div class="rule"></div>
+
+      <div class="row">
+        <div class="rowhead"><div class="label">EXTRA BOOST</div><div class="hint">for telling two things apart</div></div>
+        <button id="falseBtn" aria-pressed="false">Turn on false colour</button>
       </div>
 
       <div class="rule"></div>
