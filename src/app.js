@@ -26,13 +26,21 @@ const $ = (id) => document.getElementById(id);
 
 const EV = [0.7, 1, 1.35, 1.8];
 const EV_LABEL = ["EV −1", "EV 0", "EV +1", "EV +2"];
-const ACC = ["#f5a623", "#2f9bf0", "#ffffff"];
+const ACC = ["#f5a623", "#ff6b35", "#2f9bf0", "#ffffff"];
 const BG = ["#f5a623", "#2f9bf0", "#f2e327", "#1b2a6b", "#d2b48c", "#22c8d8"];
 
 // Mode order is the brief's: correct their vision first, then show what they
-// see, then the untouched reference.
+// see, then the untouched reference — with "extra" sitting next to the default
+// because they are the two corrections.
+//
+// The default is NATURAL, not maximum separation. Z reported that orange looked
+// purple, which was exactly right: the old default had no hue constraint. It
+// now keeps an orange orange (3 degrees mean hue shift, against 35) while still
+// separating confusable colours. See SCIENCE.md §5 for why no correction can
+// make him actually PERCEIVE the true colour.
 const MODES = [
-  { key: MODE.ASSIST,   name: (n) => `${n}'s mode`,     sub: "Colours pushed apart so they stop hiding." },
+  { key: MODE.ASSIST,   name: (n) => `${n}'s mode`,      sub: "Colours stay true, and the confusing ones move apart." },
+  { key: MODE.BOOST,    name: () => "Extra boost",       sub: "Colours change on purpose, so two similar ones cannot hide. Not their real colours." },
   { key: MODE.SIMULATE, name: (n) => `How ${n} sees it`, sub: "What their eyes actually receive — show this to other people." },
   { key: MODE.NORMAL,   name: () => "Standard",          sub: "Untouched camera. The reference frame." },
 ];
@@ -115,7 +123,12 @@ function paintReadout() {
   // Each mode chip previews the sampled colour under that mode — the design's
   // nicest detail, and it makes the modes self-explanatory without words.
   const lin = [r, g, b].map((v) => srgbToLinear(v / 255));
-  const preview = [assist(lin, me, me.boost), simulate(lin, me), lin];
+  const preview = [
+    assist(lin, me, me.boost, "natural"),
+    assist(lin, me, me.boost, "max"),
+    simulate(lin, me),
+    lin,
+  ];
   document.querySelectorAll(".mode").forEach((el, i) => {
     el.querySelector(".chip").style.background = toRGBString(preview[i]);
   });
@@ -144,7 +157,7 @@ function paintChrome() {
 }
 
 function setMode(i) {
-  S.mode = Math.max(0, Math.min(2, i));
+  S.mode = Math.max(0, Math.min(MODES.length - 1, i));
   renderer.setMode(MODES[S.mode].key);
   paintChrome();
   flash(MODES[S.mode].sub, 1800);
@@ -270,11 +283,12 @@ $("str").addEventListener("input", (e) => {
   persist({ boost: +e.target.value });
 });
 
-const showGate = (title, body, label) => {
+const showGate = (title, body, label, diag) => {
   $("gateTitle").textContent = title;
   $("gateBody").textContent = body;
   $("gateBtn").textContent = label;
-  $("gate").classList.add("on");
+  $("diag").textContent = diag || "";
+  $("gate").classList.remove("hidden");
 };
 
 /**
@@ -295,24 +309,29 @@ async function startCamera(viaTap) {
     S.cam = true;
     renderer.attach(vid);
     $("app").classList.add("ready");
-    $("gate").classList.remove("on");
+    $("gate").classList.add("hidden");
     $("camBtn").textContent = "Camera live";
     if (viaTap) flash("Camera live");
     return true;
   } catch (err) {
+    const detail = `${err.name || "Error"}: ${err.message || err}`;
+    $("app").classList.remove("ready");
     if (err.code === "unsupported" || !window.isSecureContext) {
       showGate("Camera not available",
         "A browser only allows the camera over https. Open this page at its https address and it will work.",
-        "Try again");
+        "Try again", detail);
     } else if (err.name === "NotAllowedError" && viaTap) {
       showGate("Camera is blocked",
-        "Allow camera access for this page in your browser settings, then tap below.",
-        "Try again");
-      $("app").classList.remove("ready");
+        "Allow it for this page: tap \u201cAA\u201d in the address bar, then Website Settings, then Camera.",
+        "Try again", detail);
+    } else if (err.code === "noframes") {
+      showGate("Camera opened but sent no picture",
+        "This usually clears if you close the tab and open it again.",
+        "Try again", detail);
     } else {
       showGate("Turn on the camera",
         "Point it at anything and colours get easier to tell apart.",
-        "Turn on camera");
+        "Turn on camera", viaTap ? detail : "");
     }
     return false;
   }
@@ -339,12 +358,13 @@ $("save").addEventListener("click", () => {
 // Boot
 // ---------------------------------------------------------------------------
 function boot() {
+  window.__booted = true;
   try {
     renderer = createRenderer(gl);
-  } catch {
-    document.body.innerHTML =
-      '<div style="padding:40px;font:15px/1.6 system-ui;color:#fff">' +
-      "This browser has no WebGL, which the correction needs.</div>";
+  } catch (e) {
+    showGate("This browser has no WebGL",
+      "The correction needs WebGL to run. Safari has it under Settings if it was switched off.",
+      "Try again", String(e.message || e));
     return;
   }
   applyProfile();

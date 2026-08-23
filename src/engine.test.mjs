@@ -173,6 +173,69 @@ for (const type of ALL) {
 }
 
 // ---------------------------------------------------------------------------
+H("7b. NATURAL mode keeps colours recognisable  (the bug Z found)");
+// The first version of this correction had no hue term. It turned orange into
+// pink-purple — a 67 degree shift — which looks wrong and teaches a child the
+// wrong name for a colour. Hue is now a tested property, not an afterthought.
+const EVERYDAY = [
+  ["orange", [242,132,25]], ["red", [214,40,40]], ["green", [60,150,60]],
+  ["yellow", [242,220,40]], ["blue", [40,100,210]], ["brown", [140,90,40]],
+  ["pink", [240,150,170]], ["skin", [235,180,150]], ["grass", [70,140,55]],
+];
+const hueOf = (lab) => (Math.atan2(lab[2], lab[1]) * 180 / Math.PI + 360) % 360;
+const hueShift = (a, b) => { const d = Math.abs(hueOf(a) - hueOf(b)); return d > 180 ? 360 - d : d; };
+const clampLin = (v) => v.map((x) => Math.max(0, Math.min(1, x)));
+
+console.log("     type              style     mean hue shift   worst");
+for (const type of ALL) {
+  if (!E.TYPES[type].axis) continue;
+  const prof = P(type, 0.9);
+  const stats = (style) => {
+    let sum = 0, worst = 0, which = "";
+    for (const [name, rgb] of EVERYDAY) {
+      const lin = E.from255(rgb);
+      const d = hueShift(E.toLab(lin), E.toLab(clampLin(E.assist(lin, prof, 0.6, style))));
+      sum += d; if (d > worst) { worst = d; which = name; }
+    }
+    return { mean: sum / EVERYDAY.length, worst, which };
+  };
+  const nat = stats("natural"), max = stats("max");
+  console.log(`     ${type.padEnd(17)} natural   ${nat.mean.toFixed(0).padStart(9)}deg   ${nat.worst.toFixed(0)}deg (${nat.which})`);
+  console.log(`     ${type.padEnd(17)} max       ${max.mean.toFixed(0).padStart(9)}deg   ${max.worst.toFixed(0)}deg (${max.which})`);
+  ok(`${type.padEnd(22)} natural keeps hue`, nat.mean < 14 && nat.worst < 30,
+     `mean ${nat.mean.toFixed(0)}deg worst ${nat.worst.toFixed(0)}deg`);
+  ok(`${type.padEnd(22)} natural beats max on hue`, nat.mean <= max.mean,
+     `${nat.mean.toFixed(0)}deg vs ${max.mean.toFixed(0)}deg`);
+}
+
+// Orange is the specific case Z reported. Pin it.
+{
+  const prof = P("deuteranomaly", 0.9);
+  const orange = E.from255([242, 132, 25]);
+  const shift = hueShift(E.toLab(orange), E.toLab(clampLin(E.assist(orange, prof, 0.6, "natural"))));
+  ok("orange stays orange in Z's mode", shift < 20, `${shift.toFixed(0)}deg shift`);
+}
+
+// ---------------------------------------------------------------------------
+H("7c. MAX mode still separates harder than natural  (that is its whole job)");
+for (const type of ["deuteranomaly", "protanopia", "tritanopia"]) {
+  const med = (style) => {
+    const g = [];
+    for (const [a, b] of confusionSet(type)) {
+      const prof = P(type);
+      const before = E.deltaE(E.toLab(E.asSeen(a, prof)), E.toLab(E.asSeen(b, prof)));
+      const after = E.deltaE(E.toLab(E.asSeen(a, prof, 1, style)), E.toLab(E.asSeen(b, prof, 1, style)));
+      g.push(after / Math.max(before, 0.5));
+    }
+    g.sort((x, y) => x - y);
+    return g[Math.floor(g.length / 2)];
+  };
+  const n = med("natural"), m = med("max");
+  ok(`${type.padEnd(22)} max > natural separation`, m > n, `max x${m.toFixed(1)} vs natural x${n.toFixed(1)}`);
+  ok(`${type.padEnd(22)} natural still helps`, n > 2.5, `x${n.toFixed(1)}`);
+}
+
+// ---------------------------------------------------------------------------
 H("8. Rayleigh calibration maps to the right type and severity");
 ok("normal match -> normal range", E.severityFromRayleigh(0.5).severity < 0.15);
 ok("red-heavy match -> protan", E.severityFromRayleigh(0.9).type === "protanomaly");

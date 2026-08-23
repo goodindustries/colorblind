@@ -15,17 +15,18 @@ for (const type of Object.keys(TYPES)) {
   const balanced = (src.match(/{/g) || []).length === (src.match(/}/g) || []).length;
   ok(`${type.padEnd(22)} compiles-shaped`,
      src.includes("void main()") && src.includes("vec3 simulate(") &&
-     src.includes("vec3 assist(") && balanced && !src.includes("undefined") && !src.includes("NaN"));
+     src.includes("vec3 assistNatural(") && src.includes("vec3 assistMax(") && balanced && !src.includes("undefined") && !src.includes("NaN"));
 }
 
 console.log("\nGPU constants match the CPU engine exactly:");
 for (const type of Object.keys(TYPES)) {
-  const corr = correctionFor(type);
-  if (!corr) continue;
+  const nat = correctionFor(type, "natural"), max = correctionFor(type, "max");
+  if (!nat) continue;
   const src = buildFragment({ type, severity: 1 });
-  const has = corr.pick.every((v) => src.includes(v.toFixed(6))) &&
-              corr.push.every((v) => src.includes(v.toFixed(6)));
-  ok(`${type.padEnd(22)} correction constants`, has);
+  const has = max.pick.every((v) => src.includes(v.toFixed(6))) &&
+              nat.push.every((v) => src.includes(v.toFixed(6))) &&
+              max.push.every((v) => src.includes(v.toFixed(6)));
+  ok(`${type.padEnd(22)} both corrections baked`, has);
 }
 for (const [type, fam] of [["protanomaly","protanomaly"],["deuteranomaly","deuteranomaly"]]) {
   const src = buildFragment({ type, severity: 0.7 });
@@ -36,7 +37,7 @@ for (const [type, fam] of [["protanomaly","protanomaly"],["deuteranomaly","deute
 console.log("\nMonochromacy honestly declines to recolour:");
 for (const type of ["achromatopsia", "blueConeMonochromacy"]) {
   const src = buildFragment({ type, severity: 1 });
-  ok(`${type.padEnd(22)} assist is a passthrough`, /vec3 assist\(vec3 lin\)\{ return lin; \}/.test(src));
+  ok(`${type.padEnd(22)} assist is a passthrough`, /assistNatural\(vec3 lin\)\{ return lin; \}/.test(src.replace(/\s+/g, " ")));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

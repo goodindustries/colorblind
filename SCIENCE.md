@@ -212,7 +212,61 @@ Worth being straight about, because it bounds everything above.
 
 ---
 
-## 5. Where the field is going
+## 5. Can a screen give a colour-blind person the *real* colours?
+
+Short answer: **no, and it is worth knowing exactly why**, because it sets the
+ceiling on everything else here.
+
+The goal is precise and testable: what the deficient eye receives from the
+corrected image should equal what a normal eye receives from the original —
+`simulate(C(x)) = x`. If the simulation matrix `S` is invertible, then
+`C = S⁻¹` solves it **exactly**. And `S` *is* invertible for anomalous
+trichromacy — determinant 0.10 at severity 0.8, 0.047 at 0.9, reaching zero
+only at full dichromacy.
+
+So the maths works. The screen does not.
+
+At severity 0.9 the inverse has entries reaching **14×** and **−17×**. Every
+everyday colour it produces lands far outside the display gamut, and once
+clipped, the result is *worse* than doing nothing: perceived error rises from
+ΔE 30.4 to 41.9.
+
+Optimising directly for perceived fidelity — with clamping inside the objective,
+so the search cannot cheat by leaving the gamut — gives the real ceiling:
+
+| Severity | Perceived error, uncorrected | Best a screen can do | Improvement |
+|---:|---:|---:|---:|
+| 0.40 | 19.4 | 15.3 | **−21%** |
+| 0.60 | 25.1 | 22.7 | −10% |
+| 0.75 | 28.5 | 27.4 | −4% |
+| 0.90 | 31.3 | 30.6 | −2% |
+| 1.00 | 33.0 | 31.7 | −4% |
+
+Mild deficiency can be meaningfully corrected. **Strong deficiency cannot.**
+This is a gamut limit, not an algorithm limit — no cleverness recovers it, and
+it is the same reason colour-blind glasses do not deliver "real colours" either.
+
+### So what should the correction actually do?
+
+Two honest goals remain, and they need different settings — which is why there
+are two correction modes rather than one:
+
+- **Keep colours recognisable while separating the confusable ones.** An orange
+  must still look orange. This is the default.
+- **Maximise separation, accepting false colours.** For "are these two things
+  the same colour or not", where being able to tell beats being accurate.
+
+The first version of this app shipped only the second, as the default, with no
+hue term in the optimiser at all — it maximised CIELAB separation, and ΔE
+happily permits enormous hue rotation. The result turned orange into pink-purple
+(67° hue shift). A child using it would have been taught the wrong name for a
+colour. Hue is now a constrained, tested property: **3° mean shift** for the
+default mode against 35° for the boost mode.
+
+And for the cases where none of this is enough, the colour name under the
+reticle is read from the raw sensor and is simply correct.
+
+## 6. Where the field is going
 
 **Gene therapy is the actual cure trajectory.** Mancuso et al. (*Nature*, 2009,
 Neitz lab) restored full trichromacy to adult squirrel monkeys — born

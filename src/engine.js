@@ -255,7 +255,32 @@ export function simulate(lin, profile) {
 // Measured worst-decile gain 3.6x-6.4x, median 8.3x-13.8x. See SCIENCE.md.
 // ---------------------------------------------------------------------------
 
-const CORRECTION = {
+// Two corrections, because they answer different questions.
+//
+// NATURAL is the default. Optimised for separation SUBJECT TO a hue cap
+// (mean <= 10 deg, worst <= 22 deg on everyday colours), so an orange still
+// looks orange. The previous single correction had no hue term at all — it
+// turned orange into pink-purple (67 deg shift), which is both wrong-looking
+// and teaches a child the wrong name for a colour.
+//
+// MAX drops the hue cap for maximum separation. Colours stop being true; it is
+// for "are these two things the same colour or not", not for looking at.
+//
+// Neither can make a deficient eye PERCEIVE the true colour. That would need
+// the inverse of the simulation, whose entries reach 14x and -17x at severity
+// 0.9 — far outside any display gamut. Measured: the best in-gamut correction
+// reduces perceived-colour error by 21% at severity 0.4, but only 2% at 0.9.
+// See SCIENCE.md §5.
+const CORRECTION_NATURAL = {
+  protanomaly:   { push: [0.9744, 1.0822, 1.0580], sat: 0.20 },
+  protanopia:    { push: [0.8560, 1.1781, 1.0580], sat: 0.20 },
+  deuteranomaly: { push: [0.4232, 0.9505, 0.9368], sat: 0.40 },
+  deuteranopia:  { push: [0.8560, 1.1781, 1.0580], sat: 0.20 },
+  tritanomaly:   { push: [1.1003, 1.2220, 0.7321], sat: 0.00 },
+  tritanopia:    { push: [1.1003, 1.2220, 0.7321], sat: 0.00 },
+};
+
+const CORRECTION_MAX = {
   protanomaly:   { pick: [0.6141,-0.7730,0.1589], push: [ 1.0904, 0.9818,-0.3119], sat: 0.25 },
   protanopia:    { pick: [0.5674,-0.7975,0.2051], push: [ 0.1977, 0.9303,-0.3090], sat: 0.50 },
   deuteranomaly: { pick: [0.5883,-0.7845,0.1962], push: [-1.4135,-0.4593, 1.3383], sat: 0.00 },
@@ -264,7 +289,9 @@ const CORRECTION = {
   tritanopia:    { pick: [-0.0562,-0.8307,0.5539], push: [-1.0904, 0.9818, 0.3119], sat: 0.25 },
 };
 
-export const correctionFor = (type) => CORRECTION[type] || null;
+/** @param {"natural"|"max"} style */
+export const correctionFor = (type, style = "natural") =>
+  (style === "max" ? CORRECTION_MAX : CORRECTION_NATURAL)[type] || null;
 
 /**
  * Push the information the retina discards onto an axis it still has.
@@ -272,12 +299,13 @@ export const correctionFor = (type) => CORRECTION[type] || null;
  * @param {object}   profile  {type, severity}
  * @param {number}   boost    0 = untouched, 1 = maximum separation
  */
-export function assist(lin, profile, boost = 0.5) {
-  const c = CORRECTION[profile.type];
+export function assist(lin, profile, boost = 0.5, style = "natural") {
+  const c = correctionFor(profile.type, style);
   if (!c || boost <= 0) return lin.slice();
   const sim = simulate(lin, profile);
   const err = [lin[0] - sim[0], lin[1] - sim[1], lin[2] - sim[2]];
-  const d = err[0] * c.pick[0] + err[1] * c.pick[1] + err[2] * c.pick[2];
+  const pick = CORRECTION_MAX[profile.type].pick;   // the lost axis, per type
+  const d = err[0] * pick[0] + err[1] * pick[1] + err[2] * pick[2];
   const y = luma(lin);
   const k = 1 + c.sat * boost;
   const target = lin.map((v, i) => {
@@ -320,8 +348,8 @@ export function toLab(lin) {
 export const deltaE = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 /** Round-trip a corrected colour through the display and back into the eye. */
-export function asSeen(lin, profile, boost) {
-  const shown = boost == null ? lin : assist(lin, profile, boost);
+export function asSeen(lin, profile, boost, style = "natural") {
+  const shown = boost == null ? lin : assist(lin, profile, boost, style);
   const clipped = toLinear(toSrgb(shown)); // the display cannot show out-of-gamut
   return simulate(clipped, profile);
 }
@@ -372,11 +400,14 @@ export function buildShaderConstants(profile) {
     c.severity = sev;
   }
   if (t.model === "monochrome") c.weights = `vec3(${t.weights.join(",")})`;
-  const corr = CORRECTION[profile.type];
-  if (corr) {
-    c.pick = `vec3(${corr.pick.join(",")})`;
-    c.push = `vec3(${corr.push.join(",")})`;
-    c.sat = corr.sat;
+  for (const style of ["natural", "max"]) {
+    const corr = correctionFor(profile.type, style);
+    if (!corr) continue;
+    c[style] = {
+      pick: `vec3(${CORRECTION_MAX[profile.type].pick.join(",")})`,
+      push: `vec3(${corr.push.join(",")})`,
+      sat: corr.sat,
+    };
   }
   return c;
 }

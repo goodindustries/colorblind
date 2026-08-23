@@ -10,7 +10,7 @@
 
 import { TYPES, machadoMatrix, correctionFor, brettelParams } from "./engine.js";
 
-export const MODE = { NORMAL: 0, ASSIST: 1, SIMULATE: 2 };
+export const MODE = { NORMAL: 0, ASSIST: 1, SIMULATE: 2, BOOST: 3 };
 
 const VERT = `
 attribute vec2 aPos;
@@ -75,30 +75,34 @@ function simulateGLSL(profile) {
 }
 
 export function buildFragment(profile) {
-  const corr = correctionFor(profile.type);
-  const assist = corr
-    ? `vec3 assist(vec3 lin){
-        vec3 sim = simulate(lin);
-        vec3 err = lin - sim;
-        float d = dot(err, ${glslVec(corr.pick)});
-        float y = dot(lin, vec3(0.2126, 0.7152, 0.0722));
-        float k = 1.0 + ${corr.sat.toFixed(4)} * uBoost;
-        vec3 t = lin + d * ${glslVec(corr.push)} * uBoost;
-        return y + (t - y) * k;
-      }`
+  const nat = correctionFor(profile.type, "natural");
+  const max = correctionFor(profile.type, "max");
+
+  // One body, two constant sets. `natural` keeps hues recognisable; `max`
+  // drops that constraint for maximum separation.
+  const body = (c) => c
+    ? `vec3 sim = simulate(lin);
+       vec3 err = lin - sim;
+       float d = dot(err, ${glslVec(max.pick)});
+       float y = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+       float k = 1.0 + ${c.sat.toFixed(4)} * uBoost;
+       vec3 t = lin + d * ${glslVec(c.push)} * uBoost;
+       return y + (t - y) * k;`
     // Monochromacy has no axis to move information onto. Returning the input
     // unchanged is the honest answer; SCIENCE.md §3 covers what helps instead.
-    : `vec3 assist(vec3 lin){ return lin; }`;
+    : `return lin;`;
 
   return `${HEAD}
 ${simulateGLSL(profile)}
-${assist}
+vec3 assistNatural(vec3 lin){ ${body(nat)} }
+vec3 assistMax(vec3 lin){ ${body(max)} }
 void main(){
   vec3 src = texture2D(uTex, vUV).rgb;
   vec3 lin = toLinear(src);
   vec3 outv = lin;
-  if (uMode == 1) outv = assist(lin);
+  if (uMode == 1) outv = assistNatural(lin);
   else if (uMode == 2) outv = simulate(lin);
+  else if (uMode == 3) outv = assistMax(lin);
   // Photophobic profiles dim instead of brightening — see displayPolicy().
   gl_FragColor = vec4(toSRGB(outv) * uDim, 1.0);
 }`;
@@ -222,14 +226,47 @@ export function createRenderer(canvas) {
 
 /** Camera acquisition, kept here so the design layer never touches getUserMedia. */
 export async function openCamera(video, facing = "environment") {
-  if (!navigator.mediaDevices?.getUserMedia) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     throw Object.assign(new Error("This browser exposes no camera API."), { code: "unsupported" });
   }
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-    audio: false,
-  });
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    });
+  } catch (e) {
+    // Some devices reject the resolution hints outright rather than treating
+    // them as hints. Fall back to whatever camera the browser will give us.
+    if (e.name === "OverconstrainedError" || e.name === "NotFoundError" || e.name === "TypeError") {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } else throw e;
+  }
+
   video.srcObject = stream;
-  await video.play();
+
+  // iOS Safari can reject play() because the permission dialog consumed the
+  // user gesture that authorised it. The element is muted + playsinline +
+  // autoplay, so playback starts regardless — a rejection here must not fail
+  // the whole flow, which is what made the camera look broken.
+  try { await video.play(); } catch { /* autoplay policy; frames still arrive */ }
+
+  // play() resolving does not mean frames exist yet. Wait for real data before
+  // reporting success, so we never hand the renderer a zero-sized texture.
+  if (video.readyState < 2) {
+    await new Promise((resolve) => {
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(); } };
+      video.addEventListener("loadeddata", done, { once: true });
+      video.addEventListener("playing", done, { once: true });
+      setTimeout(done, 4000);
+    });
+  }
+
+  if (!video.videoWidth) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw Object.assign(new Error("Camera gave no picture."), { code: "noframes" });
+  }
   return stream;
 }
