@@ -41,35 +41,10 @@ const S = { mode: 0, ev: 1, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: fa
 let state = Profiles.load();
 let me = Profiles.active(state);
 
-const gl = $("gl"), vid = $("vid"), sampler = $("sampler"), demo = $("demo");
+const gl = $("gl"), vid = $("vid"), sampler = $("sampler");
 const sctx = sampler.getContext("2d", { willReadFrequently: true });
 const smooth = makeSmoother(0.4);
 let renderer = null;
-
-// ---------------------------------------------------------------------------
-// Demo scene — a painted stand-in shown before camera permission, so the app
-// demonstrates itself instead of opening on a black rectangle. Ported from the
-// design file. Deliberately full of red/green pairs.
-// ---------------------------------------------------------------------------
-function paintDemo() {
-  const x = demo.getContext("2d"), W = demo.width, H = demo.height;
-  const g = x.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, "#2a2f26"); g.addColorStop(0.45, "#4a4536"); g.addColorStop(1, "#26231c");
-  x.fillStyle = g; x.fillRect(0, 0, W, H);
-  const blob = (cx, cy, r, c) => { x.fillStyle = c; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill(); };
-  for (let i = 0; i < 26; i++)
-    blob((i * 97) % W, (i * 211) % H, 60 + ((i * 37) % 70),
-         i % 2 ? "rgba(58,92,40,.55)" : "rgba(86,110,44,.45)");
-  blob(250, 520, 132, "#c62b1e"); blob(215, 485, 42, "rgba(255,255,255,.13)");
-  blob(540, 560, 120, "#5f9127"); blob(510, 528, 38, "rgba(255,255,255,.12)");
-  x.fillStyle = "#7a4a21"; x.fillRect(150, 860, 500, 120);
-  x.fillStyle = "#c9a227"; x.fillRect(200, 860, 54, 120);
-  x.fillStyle = "#2fa02f"; x.fillRect(300, 860, 54, 120);
-  x.fillStyle = "#e02020"; x.fillRect(400, 860, 54, 120);
-  x.fillStyle = "#5b3316"; x.fillRect(500, 860, 54, 120);
-  x.fillStyle = "#151515"; x.fillRect(120, 1120, 564, 220);
-  blob(230, 1230, 44, "#ff2d1a"); blob(400, 1230, 44, "#25d02a"); blob(570, 1230, 44, "#ff8a00");
-}
 
 // ---------------------------------------------------------------------------
 // Render loop
@@ -99,8 +74,9 @@ function frame() {
 // name stays true no matter what the filter is doing.
 // ---------------------------------------------------------------------------
 function sample() {
-  const src = S.cam ? vid : demo;
-  const w = src.videoWidth || src.width, h = src.videoHeight || src.height;
+  if (!S.cam) return;
+  const src = vid;
+  const w = src.videoWidth, h = src.videoHeight;
   if (!w || !h) return;
 
   // Sample where the reticle actually IS, not the geometric centre. The
@@ -294,17 +270,57 @@ $("str").addEventListener("input", (e) => {
   persist({ boost: +e.target.value });
 });
 
-$("camBtn").addEventListener("click", async () => {
+const showGate = (title, body, label) => {
+  $("gateTitle").textContent = title;
+  $("gateBody").textContent = body;
+  $("gateBtn").textContent = label;
+  $("gate").classList.add("on");
+};
+
+/**
+ * This is a camera app, so it asks on open rather than hiding the camera
+ * behind a settings screen. (The design put it behind a button because it was
+ * a mockup inside a design canvas, where auto-requesting would be wrong.)
+ *
+ * If the permission was already granted the prompt never reappears and the
+ * camera is simply live on launch. If the request fails — denied, or a browser
+ * that demands a user gesture first — the demo scene stays up behind a gate
+ * the user can tap, so the app is never a black rectangle.
+ *
+ * @param {boolean} viaTap whether a user gesture triggered this
+ */
+async function startCamera(viaTap) {
   try {
     await openCamera(vid, "environment");
     S.cam = true;
     renderer.attach(vid);
+    $("app").classList.add("ready");
+    $("gate").classList.remove("on");
     $("camBtn").textContent = "Camera live";
-    openSheet(false);
-    flash("Camera live");
+    if (viaTap) flash("Camera live");
+    return true;
   } catch (err) {
-    flash(err.code === "unsupported" ? "No camera API here" : "Camera blocked — allow access and reload", 2400);
+    if (err.code === "unsupported" || !window.isSecureContext) {
+      showGate("Camera not available",
+        "A browser only allows the camera over https. Open this page at its https address and it will work.",
+        "Try again");
+    } else if (err.name === "NotAllowedError" && viaTap) {
+      showGate("Camera is blocked",
+        "Allow camera access for this page in your browser settings, then tap below.",
+        "Try again");
+      $("app").classList.remove("ready");
+    } else {
+      showGate("Turn on the camera",
+        "Point it at anything and colours get easier to tell apart.",
+        "Turn on camera");
+    }
+    return false;
   }
+}
+
+$("gateBtn").addEventListener("click", () => startCamera(true));
+$("camBtn").addEventListener("click", async () => {
+  if (await startCamera(true)) openSheet(false);
 });
 
 $("save").addEventListener("click", () => {
@@ -323,7 +339,6 @@ $("save").addEventListener("click", () => {
 // Boot
 // ---------------------------------------------------------------------------
 function boot() {
-  paintDemo();
   try {
     renderer = createRenderer(gl);
   } catch {
@@ -332,7 +347,6 @@ function boot() {
       "This browser has no WebGL, which the correction needs.</div>";
     return;
   }
-  renderer.attach(demo);
   applyProfile();
 
   $("type").value = me.type;
@@ -345,9 +359,12 @@ function boot() {
     o.setAttribute("aria-pressed", String((me.avatarColor || BG[0]) === BG[i])));
 
   paintChrome();
-  sample();
   setInterval(sample, 140);
   requestAnimationFrame(frame);
+
+  // Ask immediately. Already-granted permission means the camera is simply
+  // live on launch, with no prompt at all.
+  startCamera(false);
 
   if (!renderer.wideGamut) console.info("[colorblind] Display P3 unavailable; running sRGB.");
 }

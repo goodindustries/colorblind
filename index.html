@@ -23,11 +23,17 @@
   button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 
   #app{position:fixed;inset:0;overflow:hidden;background:var(--bg);touch-action:none;user-select:none;-webkit-user-select:none}
-  #gl{position:absolute;inset:0;width:100%;height:100%;display:block;
+  #gl{position:absolute;inset:0;width:100%;height:100%;display:block;visibility:hidden;
       transform-origin:50% 50%;transition:transform .12s linear}
+  #app.ready #gl{visibility:visible}
+  /* Nothing to point at until the camera is live, so the reticle, readout and
+     mode chips stay out of the way rather than describing a blank screen. */
+  #top,#center,#bottom,#vignette{opacity:0;transition:opacity .3s;pointer-events:none}
+  #app.ready #top,#app.ready #center,#app.ready #bottom,#app.ready #vignette{opacity:1}
+  #app.ready #top,#app.ready #bottom{pointer-events:auto}
   #vignette{position:absolute;inset:0;pointer-events:none;
       background:radial-gradient(78% 58% at 50% 42%,rgba(0,0,0,0) 40%,rgba(0,0,0,.55) 100%)}
-  #vid,#sampler,#demo{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px}
+  #vid,#sampler{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px}
 
   /* ---- top chrome ---- */
   #top{position:absolute;left:0;right:0;top:calc(18px + env(safe-area-inset-top));
@@ -108,6 +114,18 @@
   #camBtn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13)}
   #doneBtn{background:var(--accent);color:#141414}
   #note{font:400 11px/1.5 var(--sans);color:rgba(255,255,255,.3)}
+
+  /* ---- camera gate: only shown if the on-load request does not succeed ---- */
+  #gate{position:absolute;inset:0;z-index:90;display:none;align-items:center;justify-content:center;padding:28px;
+        background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+  #gate.on{display:flex}
+  #gateCard{width:100%;max-width:330px;display:flex;flex-direction:column;gap:12px;padding:24px;border-radius:26px;
+            background:rgba(8,9,11,.82);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+            border:1px solid rgba(255,255,255,.14);text-align:center}
+  #gateTitle{font:700 21px/1.2 var(--sans);letter-spacing:-.01em}
+  #gateBody{font:400 14px/1.5 var(--sans);color:rgba(255,255,255,.55)}
+  #gateBtn{margin-top:6px;padding:16px;border-radius:16px;background:var(--accent);color:#141414;
+           font:700 16px/1 var(--sans)}
 </style>
 </head>
 <body>
@@ -152,6 +170,14 @@
       <button class="mode" data-mode="2" aria-pressed="false"><span class="chip"></span><span class="ico">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="1.6" y="4.2" width="14.8" height="11" rx="3"/><circle cx="9" cy="9.7" r="3.1"/></svg></span></button>
+    </div>
+  </div>
+
+  <div id="gate" data-chrome>
+    <div id="gateCard">
+      <div id="gateTitle">Turn on the camera</div>
+      <div id="gateBody">Point it at anything and colours get easier to tell apart.</div>
+      <button id="gateBtn">Turn on camera</button>
     </div>
   </div>
 
@@ -201,7 +227,6 @@
 
 <video id="vid" playsinline muted autoplay></video>
 <canvas id="sampler" width="32" height="32"></canvas>
-<canvas id="demo" width="804" height="1748"></canvas>
 
 <script type="module" src="./src/app.js"></script>
 </body>

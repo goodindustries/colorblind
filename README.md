@@ -125,6 +125,11 @@ All deliberate, all listed at the top of `src/app.js`:
 - The design samples the geometric centre while drawing the reticle at 46%
   height, so the name described a different spot than the crosshair. Fixed —
   sampling now follows the reticle's real position through zoom and cover-crop.
+- The camera is requested on load, not behind the sheet's button. The design
+  gated it because it was a mockup running inside a design canvas, where
+  auto-requesting would be wrong; this is a camera app, so it asks on open.
+- Dropped the design's painted scene. It was a stand-in so the mockup had
+  something to show — the real background is the camera.
 
 ## Algorithms
 
