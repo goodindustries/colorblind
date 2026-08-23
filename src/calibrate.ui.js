@@ -88,10 +88,11 @@ export function drawReward(canvas, ctx, profile, wide) {
 }
 
 /**
- * Drive a whole session. `onProgress(done, total)` for the bar, resolves with
- * `Session.result()`.
+ * Drive a whole session. `onProgress(done, total)` for the bar, `onWait(frac)`
+ * for a per-trial countdown (1 -> 0 over timeoutMs, reset each trial), resolves
+ * with `Session.result()`.
  */
-export function runSession(canvas, { onProgress, timeoutMs = 5000 } = {}) {
+export function runSession(canvas, { onProgress, onWait, timeoutMs = 5000 } = {}) {
   const { ctx, wide } = makeContext(canvas);
   K.setGamut(wide ? "display-p3" : "srgb");
   const session = new K.Session();
@@ -100,9 +101,10 @@ export function runSession(canvas, { onProgress, timeoutMs = 5000 } = {}) {
   let answered = 0;
 
   return new Promise((resolve) => {
-    let timer = 0;
+    let timer = 0, waitRaf = 0;
     const finish = () => {
       clearTimeout(timer);
+      cancelAnimationFrame(waitRaf);
       canvas.onpointerdown = null;
       resolve({ ...session.result(), gamut: K.gamut() });
     };
@@ -113,6 +115,7 @@ export function runSession(canvas, { onProgress, timeoutMs = 5000 } = {}) {
 
       const answer = (tap) => {
         clearTimeout(timer);
+        cancelAnimationFrame(waitRaf);
         canvas.onpointerdown = null;
         session.respond(tap);
         answered++;
@@ -129,6 +132,19 @@ export function runSession(canvas, { onProgress, timeoutMs = 5000 } = {}) {
         answer({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
       };
       timer = setTimeout(() => answer(null), timeoutMs);
+
+      // Countdown runs identically on every trial, catch or not — if it only
+      // showed on catch trials, its presence would itself answer "is there a
+      // fish", which is exactly the guess-detector this is meant to protect.
+      if (onWait) {
+        const startedAt = performance.now();
+        const tick = () => {
+          const frac = Math.max(0, 1 - (performance.now() - startedAt) / timeoutMs);
+          onWait(frac);
+          if (frac > 0) waitRaf = requestAnimationFrame(tick);
+        };
+        waitRaf = requestAnimationFrame(tick);
+      }
     };
     step();
   });

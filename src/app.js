@@ -533,6 +533,8 @@ async function calibrate() {
   // no-fish trials) gets thrown away silently — from a kid's side that reads
   // as the game randomly not working. Nudge as soon as a second false alarm
   // lands, while there is still time to slow down and save the run.
+  const ringFg = $("waitRingFg");
+  const CIRC = 113;
   let lastCatchFails = 0, nudgeUntil = 0;
   const result = await runSession(cv, {
     onProgress: (done, total, catchFails) => {
@@ -543,6 +545,9 @@ async function calibrate() {
         ? "Only tap when you see the fish — take your time."
         : `Tap the fish. ${done} of about ${total}`;
     },
+    // Drains every trial, catch or not — see the CSS comment on #waitRing for
+    // why it can never be conditional on which kind of trial this is.
+    onWait: (frac) => { ringFg.style.strokeDashoffset = (CIRC * (1 - frac)).toFixed(1); },
   });
   clearInterval(timeTick);
   if (stopped) return;

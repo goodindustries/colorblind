@@ -161,6 +161,16 @@ export function fishMask(x, y, flip) {
   return fx >= 0 && fx <= 0.14 && fy >= 0.20 && fy <= 0.20 + (0.14 - fx) * 1.1;
 }
 
+// cols/rows=24 is not an arbitrary number: checked against the CCT dot sizes
+// above (5.7-13.1 arcmin -> ~6-16px radius on a typical phone canvas), 24
+// columns is already close to how many of the largest dots physically fit
+// across the screen without overlapping (~20-24 at that size). Tripling the
+// grid to 72 would need dots ~3x smaller than the published range to avoid
+// dots drawing on top of each other — which changes what the test measures,
+// not just how it looks, since dot diameter is one of the few numbers here
+// that is directly from the validated protocol rather than OURS. If this
+// needs revisiting, the fix is a bigger canvas at the same dot size, not
+// smaller dots at the same canvas — and a phone screen has no more to give.
 export function makeTrial(vector, level, opts = {}) {
   const cols = opts.cols ?? 24, rows = opts.rows ?? 24;
   const fishScale = opts.fishScale ?? 0.45;

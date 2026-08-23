@@ -168,6 +168,16 @@
   #calQuit{padding:11px 16px;border-radius:12px;background:rgba(255,255,255,.08);
            border:1px solid rgba(255,255,255,.14);font:600 13px/1 var(--sans);flex:none}
 
+  /* ---- wait ring: how long is left before "no fish" counts as the answer.
+     Runs identically on every trial, catch or not — showing it only on
+     no-fish trials would itself answer the question the catch trial exists
+     to ask. Sits over a corner of the dot field, never the reticle centre. ---- */
+  #waitRing{position:absolute;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));
+            width:34px;height:34px;pointer-events:none;transform:rotate(-90deg)}
+  #waitRingBg{fill:none;stroke:rgba(255,255,255,.15);stroke-width:4}
+  #waitRingFg{fill:none;stroke:var(--accent);stroke-width:4;stroke-linecap:round;
+              stroke-dasharray:113;stroke-dashoffset:0;transition:stroke-dashoffset .05s linear}
+
   /* ---- calibration result interstitial: what the fish game found, in plain
      words, shown over the reward-fish canvas before the kid goes back to
      the camera. Framed as a discovery, not a diagnosis. ---- */
@@ -261,6 +271,11 @@
 
   <div id="cal" data-chrome>
     <canvas id="calCanvas"></canvas>
+
+    <svg id="waitRing" viewBox="0 0 44 44" aria-hidden="true">
+      <circle id="waitRingBg" cx="22" cy="22" r="18"/>
+      <circle id="waitRingFg" cx="22" cy="22" r="18"/>
+    </svg>
 
     <div id="calResult">
       <div id="resultHead">Here's what we found</div>
