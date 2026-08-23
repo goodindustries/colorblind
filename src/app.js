@@ -52,7 +52,7 @@ const MODES = [
     sub:  "The picture untouched." },
 ];
 
-const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false };
+const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, compare: false };
 let state = Profiles.load();
 let me = Profiles.active(state);
 
@@ -132,7 +132,7 @@ window.__FIT = () => ({ target: fitTarget, costMs: fitCost });
 // name stays true no matter what the filter is doing.
 // ---------------------------------------------------------------------------
 function sample() {
-  if (!S.cam) return;
+  if (!S.cam || S.compare) return; // reticle is hidden in compare view; nothing to update
   const src = vid;
   const w = src.videoWidth, h = src.videoHeight;
   if (!w || !h) return;
@@ -204,6 +204,22 @@ function setMode(i) {
   paintChrome();
   flash(MODES[S.mode].sub, 1800);
 }
+
+// Side-by-side: raw camera on the left, the corrected mode on the right, live.
+// The colour-name reticle samples a screen position that only means one thing
+// in a single full-frame view — in compare it would land over whichever half
+// happens to be under 46% height, and the two halves show different pixels
+// for the same screen point. Simplest correct answer is to hide it rather
+// than compute a split-aware reprojection for a feature whose whole point is
+// the visual comparison, not the name pill.
+function setCompare(on) {
+  S.compare = on;
+  renderer.setCompare(on);
+  $("compare").setAttribute("aria-pressed", String(on));
+  $("center").style.display = on ? "none" : "";
+  if (on) flash("Camera on the left, corrected on the right", 1800);
+}
+$("compare").addEventListener("click", () => setCompare(!S.compare));
 
 let toastTimer = 0;
 function flash(text, ms = 1100) {

@@ -340,9 +340,9 @@ export function createRenderer(canvas) {
   const srcW = () => video?.videoWidth || video?.width || 0;
   const srcH = () => video?.videoHeight || video?.height || 0;
 
-  const coverScale = () => {
+  const coverScale = (viewW = canvas.width, viewH = canvas.height) => {
     const vw = srcW() || 1, vh = srcH() || 1;
-    const va = vw / vh, ca = (canvas.width || 1) / (canvas.height || 1);
+    const va = vw / vh, ca = (viewW || 1) / (viewH || 1);
     return va > ca ? [ca / va, 1] : [1, va / ca];
   };
 
@@ -364,20 +364,48 @@ export function createRenderer(canvas) {
       gl.viewport(0, 0, canvas.width, canvas.height);
     },
 
+    setCompare(on) { state.compare = !!on; },
+
+    /**
+     * Normally one full-canvas draw at state.mode. In compare view, draws
+     * twice into left/right halves at a shared crop (each half's cover-scale
+     * computed against its own aspect ratio, not the full canvas's, or the
+     * image would look stretched) — left is always MODE.NORMAL (the raw
+     * camera), right is whatever mode is currently selected. Same texture
+     * upload either way; only the second pass's viewport and uMode differ.
+     */
     draw() {
       if (!prog || !video) return false;
       if (video.readyState !== undefined && video.readyState < 2) return false;
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
-      const [sx, sy] = coverScale();
-      gl.uniform2f(loc.uScale, sx, sy);
       gl.uniform1f(loc.uMirror, state.mirror);
-      gl.uniform1i(loc.uMode, state.mode);
       gl.uniform1f(loc.uBoost, state.boost);
       gl.uniform1f(loc.uDim, state.dim);
       gl.uniform1f(loc.uTime, (performance.now() - t0) / 1000);
       gl.uniform4f(loc.uFit, state.fit.kL, state.fit.kC, state.fit.kF, state.fit.sat);
+
+      if (!state.compare) {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        const [sx, sy] = coverScale();
+        gl.uniform2f(loc.uScale, sx, sy);
+        gl.uniform1i(loc.uMode, state.mode);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        return true;
+      }
+
+      const halfW = Math.round(canvas.width / 2);
+      const [sxL, syL] = coverScale(halfW, canvas.height);
+      gl.viewport(0, 0, halfW, canvas.height);
+      gl.uniform2f(loc.uScale, sxL, syL);
+      gl.uniform1i(loc.uMode, MODE.NORMAL);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      const [sxR, syR] = coverScale(canvas.width - halfW, canvas.height);
+      gl.viewport(halfW, 0, canvas.width - halfW, canvas.height);
+      gl.uniform2f(loc.uScale, sxR, syR);
+      gl.uniform1i(loc.uMode, state.mode === MODE.NORMAL ? MODE.NATURAL : state.mode);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       return true;
     },

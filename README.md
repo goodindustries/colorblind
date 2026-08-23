@@ -44,6 +44,10 @@ around 0.85–1.0; it ships defaulted to 0.90.
 
 **Strength** scales how aggressively the correction is applied.
 
+**Compare** (the split-rectangle icon, top left of the three) shows the raw
+camera and the selected mode side by side, live, instead of switching between
+them — for holding a screen up next to what everyone else already sees.
+
 ## Colour naming
 
 The pill under the centre reticle names whatever the reticle is on, sampled
