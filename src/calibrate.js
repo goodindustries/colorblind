@@ -143,13 +143,22 @@ export function seed(s) { seedState = s >>> 0 || 1; }
 function rnd() { seedState = (seedState * 1664525 + 1013904223) >>> 0; return seedState / 4294967296; }
 const pick = arr => arr[Math.floor(rnd() * arr.length)];
 
-// Fish mask on a unit square: body ellipse + tail triangle. `flip` mirrors.
+// Fish mask on a unit square: body ellipse + tail triangle + dorsal fin.
+// `flip` mirrors. Rounder body and a taller, more triangular tail than the
+// original read as a fish at the dot densities this test actually renders at
+// (24x24 dots, ~120 landing inside) — a thin tail disappears into noise at
+// that resolution, so the proportions here favour recognisability over
+// anatomical accuracy. This is presentation only: threshold measurement
+// depends on target/background colour and dot count, not silhouette shape.
 export function fishMask(x, y, flip) {
   if (flip) x = 1 - x;
-  const bx = (x - 0.42) / 0.30, by = (y - 0.5) / 0.20;
+  const bx = (x - 0.40) / 0.32, by = (y - 0.5) / 0.24;
   if (bx * bx + by * by <= 1) return true;
-  const tx = x - 0.68, ty = Math.abs(y - 0.5);
-  return tx >= 0 && tx <= 0.22 && ty <= tx * 0.9;
+  const tx = x - 0.62, ty = Math.abs(y - 0.5);
+  if (tx >= 0 && tx <= 0.30 && ty <= tx * 0.85 + 0.02) return true;
+  // Dorsal fin: small triangle on top of the body, midway along its back.
+  const fx = x - 0.36, fy = 0.5 - y;
+  return fx >= 0 && fx <= 0.14 && fy >= 0.20 && fy <= 0.20 + (0.14 - fx) * 1.1;
 }
 
 export function makeTrial(vector, level, opts = {}) {

@@ -94,13 +94,13 @@
          box-shadow:0 -20px 60px rgba(0,0,0,.6);transition:transform .34s cubic-bezier(.22,1,.3,1);transform:translateY(106%)}
   #sheet.on{transform:translateY(0)}
   #grab{width:38px;height:5px;border-radius:999px;background:rgba(255,255,255,.22);margin:0 auto 14px;flex:none}
-  #sheetTitle{font:600 11px/1 var(--mono);letter-spacing:.14em;color:rgba(255,255,255,.3);
+  #sheetTitle{font:600 11px/1 var(--mono);letter-spacing:.14em;color:rgba(255,255,255,.55);
               text-align:center;margin-bottom:18px;flex:none}
   #sheetBody{display:flex;flex-direction:column;gap:22px;overflow-x:hidden;overflow-y:auto;padding-bottom:8px}
   .row{display:flex;flex-direction:column;gap:11px}
   .rowhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
-  .label{font:600 11px/1 var(--mono);letter-spacing:.14em;color:rgba(255,255,255,.42)}
-  .hint{font:400 11px/1.4 var(--sans);color:rgba(255,255,255,.3);text-align:right}
+  .label{font:600 11px/1 var(--mono);letter-spacing:.14em;color:rgba(255,255,255,.65)}
+  .hint{font:400 11px/1.4 var(--sans);color:rgba(255,255,255,.55);text-align:right}
   .val{font:500 13px/1 var(--mono);color:var(--accent)}
   .rule{height:1px;background:rgba(255,255,255,.08)}
   #avatarBig{width:56px;height:56px;flex:none;border-radius:999px;display:flex;align-items:center;justify-content:center;
@@ -125,10 +125,10 @@
   .btns button{flex:1;padding:14px;border-radius:14px;text-align:center;font:600 13px/1 var(--sans)}
   #camBtn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13)}
   #doneBtn{background:var(--accent);color:#141414}
-  #note{font:400 11px/1.5 var(--sans);color:rgba(255,255,255,.3)}
+  #note{font:400 11px/1.5 var(--sans);color:rgba(255,255,255,.55)}
   #calBtn{padding:14px;border-radius:14px;background:rgba(255,255,255,.07);
           border:1px solid rgba(255,255,255,.13);font:600 13px/1 var(--sans)}
-  #calState{font:400 12px/1.4 var(--sans);color:rgba(255,255,255,.4)}
+  #calState{font:400 12px/1.4 var(--sans);color:rgba(255,255,255,.55)}
   #calState.measured{color:#8ad14b}
 
   /* ---- first-run setup ---- */
@@ -152,19 +152,37 @@
                 font:700 16px/1 var(--sans)}
   #setupSkip{padding:13px;border-radius:14px;background:none;color:rgba(255,255,255,.5);
              font:500 14px/1 var(--sans)}
-  #setupNote{font:400 12px/1.5 var(--sans);color:rgba(255,255,255,.32)}
+  #setupNote{font:400 12px/1.5 var(--sans);color:rgba(255,255,255,.55)}
 
   /* ---- calibration game ---- */
   #cal{position:absolute;inset:0;z-index:95;display:none;flex-direction:column;background:#000}
   #cal.on{display:flex}
   #calCanvas{flex:1;min-height:0;width:100%;display:block;touch-action:none}
-  #calBar{height:4px;background:rgba(255,255,255,.12);flex:none}
-  #calFill{height:100%;width:0;background:var(--accent);transition:width .2s}
+  #calTop{flex:none;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) 16px 0}
+  #calTime{font:600 13px/1 var(--mono);color:rgba(255,255,255,.6);flex:none;min-width:2.4em}
+  #calBar{height:4px;background:rgba(255,255,255,.12);flex:1;border-radius:2px}
+  #calFill{height:100%;width:0;background:var(--accent);transition:width .2s;border-radius:2px}
   #calFoot{flex:none;padding:16px 20px calc(20px + env(safe-area-inset-bottom));
            display:flex;align-items:center;justify-content:space-between;gap:14px;background:#000}
   #calMsg{font:500 14px/1.4 var(--sans);color:rgba(255,255,255,.75)}
   #calQuit{padding:11px 16px;border-radius:12px;background:rgba(255,255,255,.08);
            border:1px solid rgba(255,255,255,.14);font:600 13px/1 var(--sans);flex:none}
+
+  /* ---- calibration result interstitial: what the fish game found, in plain
+     words, shown over the reward-fish canvas before the kid goes back to
+     the camera. Framed as a discovery, not a diagnosis. ---- */
+  #calResult{position:absolute;inset:0;z-index:10;display:none;flex-direction:column;
+             align-items:center;justify-content:center;gap:10px;padding:32px 24px;
+             text-align:center;background:rgba(6,7,9,.72);-webkit-backdrop-filter:blur(10px);
+             backdrop-filter:blur(10px)}
+  #calResult.on{display:flex}
+  #resultHead{font:600 13px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+              color:var(--accent)}
+  #resultType{font:800 26px/1.2 var(--sans);color:#fff;max-width:22em}
+  #resultPlain{font:500 15px/1.5 var(--sans);color:rgba(255,255,255,.75);max-width:26em}
+  #resultWhy{font:400 13px/1.6 var(--sans);color:rgba(255,255,255,.6);max-width:26em;margin-top:6px}
+  #resultGo{margin-top:14px;padding:14px 32px;border-radius:999px;background:var(--accent);
+            color:#141414;font:700 15px/1 var(--sans);border:none}
 
   /* ---- camera gate: only shown if the on-load request does not succeed ---- */
   #gate{position:absolute;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:28px;
@@ -179,7 +197,7 @@
   #gateBody{font:400 14px/1.5 var(--sans);color:rgba(255,255,255,.55)}
   #gateBtn{margin-top:6px;padding:16px;border-radius:16px;background:var(--accent);color:#141414;
            font:700 16px/1 var(--sans)}
-  #diag{margin-top:4px;font:400 11px/1.5 var(--mono);color:rgba(255,255,255,.38);word-break:break-word}
+  #diag{margin-top:4px;font:400 11px/1.5 var(--mono);color:rgba(255,255,255,.55);word-break:break-word}
 </style>
 </head>
 <body>
@@ -243,10 +261,22 @@
 
   <div id="cal" data-chrome>
     <canvas id="calCanvas"></canvas>
-    <div id="calBar"><div id="calFill"></div></div>
+
+    <div id="calResult">
+      <div id="resultHead">Here's what we found</div>
+      <div id="resultType"></div>
+      <div id="resultPlain"></div>
+      <div id="resultWhy"></div>
+      <button id="resultGo">Show me</button>
+    </div>
+
+    <div id="calTop">
+      <div id="calTime">0:00</div>
+      <div id="calBar"><div id="calFill"></div></div>
+    </div>
     <div id="calFoot">
       <div id="calMsg">Tap the fish.</div>
-      <button id="calQuit">Stop</button>
+      <button id="calQuit">Take a break</button>
     </div>
   </div>
 

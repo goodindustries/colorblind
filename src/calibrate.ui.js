@@ -116,7 +116,7 @@ export function runSession(canvas, { onProgress, timeoutMs = 5000 } = {}) {
         canvas.onpointerdown = null;
         session.respond(tap);
         answered++;
-        onProgress?.(answered, Math.max(expected, answered + 1));
+        onProgress?.(answered, Math.max(expected, answered + 1), session.catchFails);
         step();
       };
 

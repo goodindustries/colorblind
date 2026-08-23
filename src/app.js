@@ -359,6 +359,15 @@ const openSheet = (on) => {
   S.sheet = on;
   $("sheet").classList.toggle("on", on);
   $("scrim").classList.toggle("on", on);
+  // The camera gate sits above the sheet (z-index 90 vs 80) so a denied/
+  // pending camera permission doesn't get buried under settings. But that
+  // means opening settings before the camera is granted stacks two full-
+  // screen overlays and the sheet reads as a grey wash underneath the gate's
+  // blur. Hide the gate for as long as the sheet is open; startCamera() and
+  // the permission-denied path both re-show it on their own, so nothing is
+  // lost by hiding it here — only shown while genuinely relevant.
+  if (on) $("gate").classList.add("hidden");
+  else if (!S.cam) $("gate").classList.remove("hidden");
 };
 $("gear").addEventListener("click", () => openSheet(true));
 $("scrim").addEventListener("click", () => openSheet(false));
@@ -506,16 +515,36 @@ async function calibrate() {
   }
   $("calMsg").textContent = "Tap the fish. If there is no fish, wait.";
   $("calFill").style.width = "0%";
+  $("calTime").textContent = "0:00";
 
   let stopped = false;
   $("calQuit").onclick = () => { stopped = true; $("cal").classList.remove("on"); calRunning = false; };
 
+  // Live elapsed time — the game has no fixed length (staircases decide it),
+  // so a kid with no sense of "about 3 minutes" needs to see time passing
+  // rather than guess whether it is almost over.
+  const startedAt = Date.now();
+  const timeTick = setInterval(() => {
+    const s = Math.floor((Date.now() - startedAt) / 1000);
+    $("calTime").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }, 1000);
+
+  // A run that fails the reliability check at the end (too many taps on
+  // no-fish trials) gets thrown away silently — from a kid's side that reads
+  // as the game randomly not working. Nudge as soon as a second false alarm
+  // lands, while there is still time to slow down and save the run.
+  let lastCatchFails = 0, nudgeUntil = 0;
   const result = await runSession(cv, {
-    onProgress: (done, total) => {
+    onProgress: (done, total, catchFails) => {
       $("calFill").style.width = Math.min(100, (done / total) * 100).toFixed(1) + "%";
-      $("calMsg").textContent = `Tap the fish. ${done} of about ${total}`;
+      if (catchFails > lastCatchFails && catchFails >= 2) nudgeUntil = Date.now() + 4000;
+      lastCatchFails = catchFails;
+      $("calMsg").textContent = Date.now() < nudgeUntil
+        ? "Only tap when you see the fish — take your time."
+        : `Tap the fish. ${done} of about ${total}`;
     },
   });
+  clearInterval(timeTick);
   if (stopped) return;
 
   // A run full of false alarms on the no-fish trials is guessing, and writing
@@ -528,7 +557,7 @@ async function calibrate() {
     $("calQuit").textContent = "Close";
     $("calQuit").onclick = () => {
       $("cal").classList.remove("on");
-      $("calQuit").textContent = "Stop";
+      $("calQuit").textContent = "Take a break";
       calRunning = false;
     };
     return;
@@ -543,13 +572,26 @@ async function calibrate() {
   const { ctx, wide } = makeContext(cv);
   const scales = drawReward(cv, ctx, { axis: result.axis, severity: result.severity }, wide);
   $("calFill").style.width = "100%";
-  $("calMsg").textContent = result.axis
-    ? `${TYPES[patch.type].label}, strength ${patch.severity.toFixed(2)} — ${scales} colours you can tell apart`
-    : `Nothing unusual found — ${scales} colours you can tell apart`;
-  $("calQuit").textContent = "Done";
-  $("calQuit").onclick = () => {
+  $("calMsg").textContent = "";
+
+  // What the game found, in plain words, before handing back to the camera.
+  // A kid does not know what "deuteranomaly, severity 0.90" means; TYPES[].plain
+  // already has the everyday version ("Green-weak — reds and greens blend
+  // together"), so lead with that instead of the clinical label.
+  if (result.axis) {
+    const t = TYPES[patch.type];
+    $("resultType").textContent = t.label;
+    $("resultPlain").textContent = t.plain;
+    $("resultWhy").textContent = `The camera found ${scales} colours it can now help you tell apart.`;
+  } else {
+    $("resultType").textContent = "Nothing unusual found";
+    $("resultPlain").textContent = "Your colour vision looks typical on this test.";
+    $("resultWhy").textContent = `${scales} colours checked — all came through clearly.`;
+  }
+  $("calResult").classList.add("on");
+  $("resultGo").onclick = () => {
+    $("calResult").classList.remove("on");
     $("cal").classList.remove("on");
-    $("calQuit").textContent = "Stop";
     calRunning = false;
     flash(result.axis ? `Measured: ${TYPES[patch.type].label}` : "Measured: nothing unusual", 2200);
   };

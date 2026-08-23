@@ -4,3 +4,4 @@ corpus/*.png
 corpus/*.jpg
 corpus/*.jpeg
 tools/train-result.json
+.gstack/
