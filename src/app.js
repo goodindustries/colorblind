@@ -241,6 +241,18 @@ function syncSheet() {
   $("letter").value = me.name;
   document.querySelectorAll("#bgs button").forEach((o, i) =>
     o.setAttribute("aria-pressed", String((me.avatarColor || BG[0]) === BG[i])));
+
+  // Say plainly whether these numbers were measured or are a starting guess.
+  // A profile that has never run the test is using my default, not this
+  // person's eyes, and that is worth knowing before trusting the correction.
+  const who = (me.name || "?").toUpperCase();
+  const st = $("calState");
+  st.classList.toggle("measured", !!me.calibrated);
+  st.textContent = me.calibrated
+    ? `Measured — ${me.calibrationNote || "from the fish game"}`
+    : `${who} has not been measured. These are starting values, not ${who}'s eyes.`;
+  $("calBtn").textContent = me.calibrated ? "Measure again" : "Start the fish game";
+
   paintPeople();
 }
 

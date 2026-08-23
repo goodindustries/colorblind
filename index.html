@@ -124,6 +124,8 @@
   #note{font:400 11px/1.5 var(--sans);color:rgba(255,255,255,.3)}
   #calBtn{padding:14px;border-radius:14px;background:rgba(255,255,255,.07);
           border:1px solid rgba(255,255,255,.13);font:600 13px/1 var(--sans)}
+  #calState{font:400 12px/1.4 var(--sans);color:rgba(255,255,255,.4)}
+  #calState.measured{color:#8ad14b}
 
   /* ---- calibration game ---- */
   #cal{position:absolute;inset:0;z-index:95;display:none;flex-direction:column;background:#000}
@@ -261,6 +263,7 @@
 
       <div class="row">
         <div class="rowhead"><div class="label">MEASURE IT</div><div class="hint">~3 min, tap the fish</div></div>
+        <div id="calState">Not measured yet</div>
         <button id="calBtn">Start the fish game</button>
       </div>
 
