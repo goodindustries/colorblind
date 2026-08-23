@@ -28,16 +28,20 @@
   #app.ready #gl{visibility:visible}
   /* Nothing to point at until the camera is live, so the reticle, readout and
      mode chips stay out of the way rather than describing a blank screen. */
-  #top,#center,#bottom,#vignette{opacity:0;transition:opacity .3s;pointer-events:none}
-  #app.ready #top,#app.ready #center,#app.ready #bottom,#app.ready #vignette{opacity:1}
-  #app.ready #top,#app.ready #bottom{pointer-events:auto}
+  /* The reticle, readout and mode chips wait for a camera — there is nothing
+     to point at without one. The gear does NOT: settings have to stay
+     reachable when the camera is blocked, otherwise the one screen that can
+     explain the problem is locked behind the problem. */
+  #center,#bottom,#vignette{opacity:0;transition:opacity .3s;pointer-events:none}
+  #app.ready #center,#app.ready #bottom,#app.ready #vignette{opacity:1}
+  #app.ready #bottom{pointer-events:auto}
   #vignette{position:absolute;inset:0;pointer-events:none;
       background:radial-gradient(78% 58% at 50% 42%,rgba(0,0,0,0) 40%,rgba(0,0,0,.55) 100%)}
   #vid,#sampler{position:absolute;left:-9999px;top:-9999px;width:1px;height:1px}
 
   /* ---- top chrome ---- */
   #top{position:absolute;left:0;right:0;top:calc(18px + env(safe-area-inset-top));
-       display:flex;align-items:center;justify-content:flex-end;padding:0 18px;z-index:20}
+       display:flex;align-items:center;justify-content:flex-end;padding:0 18px;z-index:96}
   #top .actions{display:flex;align-items:center;gap:9px}
   .glass{width:44px;height:44px;border-radius:999px;display:flex;align-items:center;justify-content:center;
          background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
@@ -141,9 +145,11 @@
 
   /* ---- camera gate: only shown if the on-load request does not succeed ---- */
   #gate{position:absolute;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:28px;
-        background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+        background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+        pointer-events:none}
+  #gateCard{pointer-events:auto}
   #gate.hidden{display:none}
-  #gateCard{width:100%;max-width:330px;display:flex;flex-direction:column;gap:12px;padding:24px;border-radius:26px;
+  #gateCard{pointer-events:auto;width:100%;max-width:330px;display:flex;flex-direction:column;gap:12px;padding:24px;border-radius:26px;
             background:rgba(8,9,11,.82);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
             border:1px solid rgba(255,255,255,.14);text-align:center}
   #gateTitle{font:700 21px/1.2 var(--sans);letter-spacing:-.01em}

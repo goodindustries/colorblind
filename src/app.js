@@ -448,8 +448,19 @@ async function calibrate() {
     const dpr = Math.min(devicePixelRatio || 1, 2);
     cv.width = Math.round(cv.clientWidth * dpr);
     cv.height = Math.round(cv.clientHeight * dpr);
+    return cv.width > 0 && cv.height > 0;
   };
-  fit();
+  // One frame for the overlay to lay out before measuring it.
+  await new Promise((r) => requestAnimationFrame(() => r()));
+  if (!fit()) {
+    await new Promise((r) => setTimeout(r, 120));
+    if (!fit()) {
+      $("calMsg").textContent = "The game could not size itself on this screen. Tell Claude what phone this is.";
+      $("calQuit").textContent = "Close";
+      $("calQuit").onclick = () => { $("cal").classList.remove("on"); calRunning = false; };
+      return;
+    }
+  }
   $("calMsg").textContent = "Tap the fish. If there is no fish, wait.";
   $("calFill").style.width = "0%";
 
