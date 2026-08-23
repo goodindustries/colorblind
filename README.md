@@ -90,6 +90,21 @@ cd colorblind && python3 -m http.server 8000
 
 The whole app is `index.html`. Edit it, reload, done.
 
+## Under the hood
+
+The colour science lives in `src/` and is independent of any UI:
+
+| File | What it is |
+|---|---|
+| `src/engine.js` | All eight deficiency types, simulation, correction, calibration |
+| `src/optimize.mjs` | Derives the correction constants numerically. Re-runnable |
+| `src/engine.test.mjs` | 54 assertions. `node src/engine.test.mjs` |
+| `src/profiles.js` | Per-person profiles, including per-type brightness policy |
+| [`SCIENCE.md`](SCIENCE.md) | Why each model was chosen, and what to build next |
+
+Note: `index.html` still runs its own older deuteranomaly-only shader. Wiring it
+to `src/engine.js` is pending a UI redesign.
+
 ## Algorithms
 
 - **Simulation**: Machado, Oliveira & Fernandes (2009), *A Physiologically-based
