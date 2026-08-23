@@ -109,7 +109,7 @@ const PROFILE = { axis: "deutan", severity: 0.9 };
 // --- applyParams: hue cap and gamut, same guarantees as correct.js ----------
 {
   const ctx = A.makeContext(PROFILE);
-  const strongest = { kL: 6, kC: 1.6, kF: 1.6, sat: 0.6 };
+  const strongest = { kL: 30, kC: 1.6, kF: 1.6, sat: 0.6 };
   for (const rgb of [[242, 132, 25], [214, 40, 40], [60, 150, 60], [140, 60, 180]]) {
     const lin = from255(rgb);
     const out = A.applyParams(lin, ctx, strongest, 1);
@@ -136,7 +136,7 @@ const PROFILE = { axis: "deutan", severity: 0.9 };
 // --- makeSmoother: converges, doesn't overshoot or discontinuity-jump -------
 {
   const sm = A.makeSmoother(300, A.DEFAULT_PARAMS);
-  const target = { kL: 6, kC: 1.6, kF: 1.6, sat: 0.6 };
+  const target = { kL: 30, kC: 1.6, kF: 1.6, sat: 0.6 };
   let t = 0, prev = null, jumped = false;
   for (let i = 0; i < 50; i++) {
     t += 50;

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Strength ceiling sweep</title>
+<style>body{background:#0b0c0e;color:#eee;font:13px/1.5 ui-monospace,Menlo,monospace;padding:16px}
+pre{white-space:pre-wrap}</style></head>
+<body><pre id="out">loading…</pre>
+<script type="module">
+/**
+ * Where does pushing the correction harder stop helping and start lying?
+ *
+ * adapt.js's grid search has bounds on kL/kC/kF/sat that need to earn their
+ * keep — this sweeps well past whatever they currently are on the real photo
+ * corpus and measures three things at each level:
+ *   gain      median separation improvement (higher is better)
+ *   hueViol   % of chromatic pixels where holding the hue cap forced chroma
+ *             to zero (guardHue's achromatic fallback) — a proxy for "this
+ *             pixel wanted to lie about hue and got clamped to grey instead"
+ *   harm      % of pairs made worse under the same floor/ceiling objective
+ *             already validated in adapt.js
+ *
+ * The ceiling is wherever gain flattens or turns over while hueViol/harm
+ * keep climbing — past that point, pushing harder buys nothing or costs
+ * naturalness for no gain. Re-run this whenever a parameter's bound is
+ * suspected of being a guess rather than a measurement (see adapt.js's GRID
+ * comment for the last result: kC/kF/sat plateau at their current bounds,
+ * kL did not — its bound was raised from 6 to 30 after this found the real
+ * peak sits there, x1.86->x2.88 gain with harm dropping 14%->7%).
+ *
+ * Run: serve the repo (e.g. `python3 -m http.server 8765`) with corpus/
+ * populated per corpus/README.md, then open this file in a browser, or drive
+ * it headless the same way tools/train.mjs drives train.html.
+ */
+import { optimiseForPalette, applyParams, makeContext, palettePairs, quantiseFrame }
+  from "./src/adapt.js";
+import { toLab, deltaE, from255 } from "./src/engine.js";
+
+const out = document.getElementById("out");
+const log = (s) => { out.textContent += s + "\n"; };
+out.textContent = "";
+
+async function loadServed() {
+  let list = [];
+  try { list = await (await fetch("/corpus/index.json")).json(); } catch { return []; }
+  const imgs = [];
+  for (const name of list) {
+    try {
+      const img = new Image();
+      await new Promise((r, j) => { img.onload = r; img.onerror = j; img.src = "/corpus/" + name; });
+      const S = 320;
+      const c = document.createElement("canvas");
+      c.width = S; c.height = Math.max(1, Math.round(S * img.height / img.width));
+      const x = c.getContext("2d", { willReadFrequently: true });
+      x.drawImage(img, 0, 0, c.width, c.height);
+      imgs.push({ name, data: x.getImageData(0, 0, c.width, c.height) });
+    } catch { log("  could not load " + name); }
+  }
+  return imgs;
+}
+
+const PROFILE = { axis: "deutan", severity: 0.9 };
+
+function samplesFromImageData(imageData) {
+  const { data, width, height } = imageData;
+  const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 8000)));
+  const samples = [];
+  for (let y = 0; y < height; y += step) for (let x = 0; x < width; x += step) {
+    const o = (y * width + x) * 4;
+    if (data[o + 3] < 200) continue;
+    samples.push(from255([data[o], data[o + 1], data[o + 2]]));
+  }
+  return samples;
+}
+
+// One level of the sweep: fixed params applied uniformly (not per-frame
+// optimised — measuring what a given push STRENGTH does, not letting the
+// optimiser dodge the question by picking a milder point nearby).
+function evalLevel(params, palettes, ctx) {
+  let gainSum = 0, gainN = 0, hueViol = 0, hueTotal = 0, harmSum = 0, harmWsum = 0;
+  for (const { items, pairs } of palettes) {
+    if (!pairs.length) continue;
+    for (const it of items) {
+      const before = toLab(it.lin);
+      const cBefore = Math.hypot(before[1], before[2]);
+      if (cBefore < 8) continue; // near-neutral, not a meaningful probe
+      hueTotal++;
+      const after = toLab(applyParams(it.lin, ctx, params, 1));
+      const cAfter = Math.hypot(after[1], after[2]);
+      if (cAfter < 4 && (params.kC > 0 || params.kF > 0)) hueViol++;
+    }
+    for (const q of pairs) {
+      const d0 = deltaE(ctx.seen(items[q.i].lin), ctx.seen(items[q.j].lin));
+      const seenA = ctx.seen(applyParams(items[q.i].lin, ctx, params, 1));
+      const seenB = ctx.seen(applyParams(items[q.j].lin, ctx, params, 1));
+      const d1 = deltaE(seenA, seenB);
+      gainSum += d1 / Math.max(d0, 1); gainN++;
+      const dw = d1 - d0;
+      if (dw < -1) harmSum += q.weight;
+      harmWsum += q.weight;
+    }
+  }
+  return {
+    gain: gainN ? gainSum / gainN : 1,
+    hueViol: hueTotal ? hueViol / hueTotal : 0,
+    harm: harmWsum ? harmSum / harmWsum : 0,
+  };
+}
+
+function sweep(label, levels, paramsFor, palettes, ctx) {
+  log(`\n${label}`);
+  log("level   gain    hueViol  harm");
+  const results = [];
+  for (const level of levels) {
+    const r = evalLevel(paramsFor(level), palettes, ctx);
+    results.push({ level, ...r });
+    log(`${level.toFixed(1).padEnd(8)}x${r.gain.toFixed(2).padEnd(7)} ${(r.hueViol * 100).toFixed(0).padStart(3)}%     ${(r.harm * 100).toFixed(0).padStart(3)}%`);
+  }
+  return results;
+}
+
+(async () => {
+  const served = await loadServed();
+  log(`corpus: ${served.length} real photographs`);
+  if (!served.length) { log("no photos in corpus/ — nothing to sweep against"); window.__SWEEP_DONE = true; return; }
+
+  const ctx = makeContext(PROFILE);
+  const palettes = served.map(({ data }) => {
+    const samples = samplesFromImageData(data);
+    const palette = quantiseFrame(samples, 32, 8);
+    return palettePairs(palette, ctx);
+  });
+  const totalPairs = palettes.reduce((s, p) => s + p.pairs.length, 0);
+  log(`${totalPairs} confusion pairs found across the corpus`);
+
+  const kCkF = sweep("kC/kF (kL=0, sat=0.3 held fixed):",
+    [0, 0.4, 0.8, 1.2, 1.6, 2.4, 3.2, 4.0, 6.0],
+    (level) => ({ kL: 0, kC: level, kF: level, sat: 0.3 }), palettes, ctx);
+
+  const kL = sweep("kL (kC=kF=0.8, sat=0.3 held fixed):",
+    [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 100, 200],
+    (level) => ({ kL: level, kC: 0.8, kF: 0.8, sat: 0.3 }), palettes, ctx);
+
+  const sat = sweep("sat (kC=kF=0.8, kL=0 held fixed):",
+    [0, 0.3, 0.6, 0.9, 1.2, 1.6, 2.0, 3.0],
+    (level) => ({ kL: 0, kC: 0.8, kF: 0.8, sat: level }), palettes, ctx);
+
+  window.__SWEEP = { totalPairs, kCkF, kL, sat };
+  window.__SWEEP_DONE = true;
+  log("\ndone");
+})().catch((e) => { window.__SWEEP_ERROR = String(e.stack || e); log("FAILED " + e); });
+</script></body></html>

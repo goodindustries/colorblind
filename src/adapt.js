@@ -151,8 +151,15 @@ export function palettePairs(palette, ctx) {
   return { items, pairs: pairs.slice(0, 400) };
 }
 
+// kL's range was 0-6 until measured against the real corpus (strength-sweep.html):
+// kC/kF and sat both plateau at their current bounds (1.6, 0.6) — pushing
+// them further buys nothing but hue-cap violations, so those stay. kL does
+// not plateau at 6; gain keeps climbing to a real peak at ~30 (x1.86 -> x2.88
+// gain, harm 14% -> 7% — not a tradeoff, strictly better on both axes), then
+// declines past that as the achromatic fallback starts firing on more pixels.
+// That decline is the true ceiling, not a guess.
 const GRID = [];
-for (const kL of [0, 1.5, 3, 4.5, 6])
+for (const kL of [0, 5, 10, 15, 20, 25, 30])
   for (const kC of [0, 0.4, 0.8, 1.2, 1.6])
     for (const kF of [0, 0.4, 0.8, 1.2, 1.6])
       for (const sat of [0, 0.3, 0.6]) GRID.push({ kL, kC, kF, sat });
@@ -196,10 +203,10 @@ export function optimiseForPalette(palette, profile, opts = {}) {
     if (!best || s.score > best.score) best = { ...p, ...s };
   }
   // Local refine around the winner.
-  for (const dL of [-0.75, 0, 0.75]) for (const dC of [-0.2, 0, 0.2])
+  for (const dL of [-2, 0, 2]) for (const dC of [-0.2, 0, 0.2])
     for (const dF of [-0.2, 0, 0.2]) for (const dS of [-0.15, 0, 0.15]) {
       const p = {
-        kL: Math.max(0, Math.min(6, best.kL + dL)),
+        kL: Math.max(0, Math.min(30, best.kL + dL)),
         kC: Math.max(0, Math.min(1.6, best.kC + dC)),
         kF: Math.max(0, Math.min(1.6, best.kF + dF)),
         sat: Math.max(0, Math.min(0.6, best.sat + dS)),
