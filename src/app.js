@@ -52,11 +52,12 @@ const MODES = [
     sub:  "The picture untouched." },
 ];
 
-const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, compare: false };
+const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, compare: false, brightness: 1 };
 let state = Profiles.load();
 let me = Profiles.active(state);
 
-const gl = $("gl"), vidCompare = $("vidCompare"), vid = $("vid"), sampler = $("sampler");
+const gl = $("gl"), glRaw = $("glRaw"), vid = $("vid"), sampler = $("sampler");
+const rawCtx = glRaw.getContext("2d", { alpha: false });
 const sctx = sampler.getContext("2d", { willReadFrequently: true });
 const smooth = makeSmoother(0.4);
 let renderer = null;
@@ -70,7 +71,14 @@ function exposure() {
   // brightness here is the photophobic profiles, where bright screens hurt.
   // Photophobic profiles dim rather than brighten — bright screens genuinely
   // hurt in achromatopsia and blue cone monochromacy. SCIENCE.md §2.
-  return policy.brightness === "reduce" ? 0.55 : 1;
+  const base = policy.brightness === "reduce" ? 0.55 : 1;
+  // S.brightness is the double-tap boost, on top of that policy baseline —
+  // more light genuinely helps an anomalous trichromat's signal-to-noise
+  // limited cone discrimination (MODEL.md, "Green-weak ... more light
+  // genuinely helps"). Never applied for a profile the policy already
+  // dimmed for comfort; brightening on top of "this hurts to look at" would
+  // be actively harmful, not helpful.
+  return policy.brightness === "reduce" ? base : base * S.brightness;
 }
 
 function applyProfile() {
@@ -115,12 +123,31 @@ function refit(now) {
   sampler.width = 32; sampler.height = 32;
 }
 
+// Compare view's bottom half: paint the same already-decoded video frame
+// that just went into the WebGL texture, via plain 2D drawImage — copying
+// pixels, not reading the camera stream a second time. See the #glRaw CSS
+// comment for why: a second live decode of the stream (WebGL context OR
+// <video> element, tried both) streaked on a real iPhone; this doesn't
+// decode anything, it just paints what's already in memory for this frame.
+function drawRaw() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.round(glRaw.clientWidth * dpr), h = Math.round(glRaw.clientHeight * dpr);
+  if (glRaw.width !== w || glRaw.height !== h) { glRaw.width = w; glRaw.height = h; }
+  const vw = vid.videoWidth, vh = vid.videoHeight;
+  if (!vw || !vh) return;
+  // Cover-crop: scale to fill w/h, centring whichever axis overflows.
+  const scale = Math.max(w / vw, h / vh);
+  const dw = vw * scale, dh = vh * scale;
+  rawCtx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
+}
+
 function frame() {
   renderer.resize();
   const now = performance.now();
   if (S.cam && now - lastFit > 1000 / FIT_HZ) { lastFit = now; refit(now); }
   renderer.setFit(smoothFit(fitTarget, now));
   renderer.draw();
+  if (S.compare) drawRaw();
   requestAnimationFrame(frame);
 }
 
@@ -187,6 +214,7 @@ function paintChrome() {
   $("icoZ").textContent = initial;
   $("avatarBig").style.background = me.avatarColor || BG[0];
   $("modeName").textContent = MODES[S.mode].name(initial);
+  $("compareLabelTop").textContent = MODES[S.mode].name(initial);
   document.querySelectorAll(".mode").forEach((el, i) =>
     el.setAttribute("aria-pressed", String(i === S.mode)));
   $("gl").style.transform = `scale(${S.zoom.toFixed(3)})`;
@@ -208,12 +236,11 @@ function setMode(i) {
 // Split top/bottom rather than left/right — a phone screen is taller than
 // wide, so a horizontal seam keeps each half nearly the full picture instead
 // of cropping it into a narrow strip. The corrected mode on top (the live
-// WebGL canvas, unchanged), raw camera below — see the #vidCompare CSS
-// comment for why that half is a plain <video> and not a second WebGL draw:
-// two live GL contexts drawing every frame streaked on a real iPhone even
-// once split into two fully independent canvases, which is a known-fragile
-// pattern on mobile Safari, not something fixable from this app's shader
-// math. A <video> element costs no GPU context at all.
+// WebGL canvas, unchanged), raw camera below — see the #glRaw CSS comment
+// for the full history: a second WebGL context AND a second <video> element
+// both streaked on a real iPhone when reading the camera stream a second
+// time, which is why the bottom half now copies already-decoded pixels via
+// drawImage instead of decoding the stream again by any method.
 //
 // The colour-name reticle samples a screen position that only means one
 // thing in a single full-frame view — in compare the two halves show
@@ -226,7 +253,6 @@ function setCompare(on) {
   $("app").classList.toggle("compare", on);
   $("compare").setAttribute("aria-pressed", String(on));
   $("center").style.display = on ? "none" : "";
-  if (on) flash("Z's mode on top, camera below", 1800);
 }
 $("compare").addEventListener("click", () => setCompare(!S.compare));
 
@@ -333,10 +359,26 @@ function persist(patch) {
   paintPeople();
 }
 
+// Cycle brightness on a double-tap: 1x -> 1.5x -> 2x -> back to 1x. More
+// light genuinely helps an anomalous trichromat's signal-to-noise limited
+// cone discrimination (MODEL.md), and unlike a slider this needs no menu —
+// point, double-tap, see more. Never for a photophobic profile (see
+// exposure()'s own guard); double-tapping there is a silent no-op rather
+// than an error, since accidentally brightening a screen that hurts to look
+// at would be actively harmful.
+const BRIGHTNESS_STEPS = [1, 1.5, 2];
+function cycleBrightness() {
+  if (displayPolicy(me).brightness === "reduce") return;
+  const i = BRIGHTNESS_STEPS.indexOf(S.brightness);
+  S.brightness = BRIGHTNESS_STEPS[(i + 1) % BRIGHTNESS_STEPS.length];
+  renderer.setExposure(exposure());
+  flash(S.brightness === 1 ? "Brightness normal" : `Brightness ${S.brightness}×`);
+}
+
 // ---------------------------------------------------------------------------
-// Gestures: swipe X changes mode, drag Y zooms, tap steps exposure.
+// Gestures: swipe X changes mode, drag Y zooms, double-tap steps brightness.
 // ---------------------------------------------------------------------------
-let p = null;
+let p = null, lastTapAt = 0;
 const app = $("app");
 app.addEventListener("pointerdown", (e) => {
   if (e.target.closest?.("[data-chrome]")) { p = null; return; }
@@ -357,14 +399,21 @@ app.addEventListener("pointermove", (e) => {
     flash(S.zoom.toFixed(1) + "×");
   }
 });
-const endDrag = () => {
+const endDrag = (e) => {
   const q = p; p = null;
   $("modeName").style.transform = "";
   $("modeName").style.opacity = "1";
   if (!q) return;
   if (q.ax === "x") {
     if (Math.abs(q.drag || 0) > 55) setMode(S.mode + (q.drag < 0 ? 1 : -1));
+    return;
   }
+  if (q.ax) return; // a real zoom drag ended here; not a tap
+  // A plain tap (no drag axis ever set). Two of these within 300ms is a
+  // double-tap; anything slower is just two separate taps.
+  const now = performance.now();
+  if (now - lastTapAt < 300) { lastTapAt = 0; cycleBrightness(); }
+  else lastTapAt = now;
 };
 app.addEventListener("pointerup", endDrag);
 app.addEventListener("pointercancel", endDrag);
@@ -470,15 +519,9 @@ const showGate = (title, body, label, diag) => {
  */
 async function startCamera(viaTap) {
   try {
-    const stream = await openCamera(vid, "environment");
+    await openCamera(vid, "environment");
     S.cam = true;
     renderer.attach(vid);
-    // Compare view's bottom half is the actual <video> element playing the
-    // SAME stream, not a second WebGL draw of it — see the #vidCompare CSS
-    // comment for why. Two elements can each hold their own reference to one
-    // MediaStream with no extra getUserMedia() call and no extra GPU context.
-    vidCompare.srcObject = stream;
-    vidCompare.play?.().catch(() => {});
     $("app").classList.add("ready");
     $("gate").classList.add("hidden");
     $("camBtn").textContent = "Camera live";

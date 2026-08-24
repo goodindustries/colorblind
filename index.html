@@ -28,26 +28,32 @@
   #app.ready #gl{visibility:visible}
 
   /* ---- compare view ----
-     Two attempts at the bottom half both streaked on a real iPhone: first a
-     single canvas split per-frame with gl.viewport/gl.scissor, then two
-     separate canvases each with their own WebGL context. The second attempt
-     still streaking — on BOTH halves, not just the seam — ruled out anything
-     about splitting or scissoring and pointed at the real cause: two live
-     WebGL contexts drawing every frame is a known-fragile pattern on mobile
-     Safari (shared GPU context budget across contexts), not something this
-     app's shader math controls.
-     So the bottom half carries no WebGL at all. It is the actual <video>
-     element showing the actual camera feed natively — the browser's own
-     video compositor, zero shader, zero second GL context. Only one thing
-     in this feature touches WebGL: #gl, exactly as it already does outside
-     compare mode. object-fit:cover reproduces the cover-crop the shader
-     path computes manually. (No mirror handling needed — this app only ever
-     opens the back/"environment" camera; setMirror exists in render.js but
-     nothing in app.js ever calls it.) */
-  #vidCompare{position:absolute;left:0;right:0;bottom:0;height:50%;width:100%;display:none;
-              object-fit:cover;border-top:1px solid rgba(255,255,255,.14)}
+     Three attempts at the bottom half all streaked on a real iPhone: a
+     single canvas split with gl.viewport/gl.scissor, two independent WebGL
+     contexts, and a second <video> element playing the same MediaStream. The
+     third one confirmed the real pattern: the TOP half (the original, single,
+     already-proven WebGL pipeline) was clean every time; only whichever
+     element ran a SECOND independent read of the live camera stream ever
+     streaked — a second WebGL context and a second <video> decode both
+     triggered it identically, which means the problem is "two live pipelines
+     from one camera stream," not WebGL specifically.
+     So there is now only ever one live read of the camera: #glRaw is a plain
+     2D canvas that app.js paints via ctx.drawImage(vid, ...) once a frame —
+     copying pixels already decoded for the WebGL texture upload, not
+     decoding the stream again. No srcObject, no play(), no second pipeline
+     of any kind for the camera to run through. */
+  #glRaw{position:absolute;left:0;right:0;bottom:0;height:50%;width:100%;display:none;
+         border-top:1px solid rgba(255,255,255,.14)}
   #app.compare #gl{top:0;bottom:50%;height:50%}
-  #app.compare.ready #vidCompare{display:block}
+  #app.compare.ready #glRaw{display:block}
+
+  #compareLabelTop,#compareLabelBottom{position:absolute;left:16px;display:none;z-index:20;
+      padding:7px 14px;border-radius:999px;font:700 12px/1 var(--sans);letter-spacing:-.01em;
+      background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+      pointer-events:none}
+  #compareLabelTop{top:calc(70px + env(safe-area-inset-top))}
+  #compareLabelBottom{bottom:calc(50% + 14px)}
+  #app.compare.ready #compareLabelTop,#app.compare.ready #compareLabelBottom{display:block}
   /* Nothing to point at until the camera is live, so the reticle, readout and
      mode chips stay out of the way rather than describing a blank screen. */
   /* The reticle, readout and mode chips wait for a camera — there is nothing
@@ -92,12 +98,12 @@
   #bottom{position:absolute;left:0;right:0;bottom:0;padding:60px 20px calc(30px + env(safe-area-inset-bottom));
           display:flex;flex-direction:column;align-items:center;gap:14px;z-index:20;pointer-events:none;
           background:linear-gradient(to top,rgba(8,9,11,.8),rgba(8,9,11,0));transition:padding .2s,gap .2s}
-  /* Compare halves the screen; the mode picker at full size ate a big chunk
-     of the already-halved bottom canvas. Shrink it rather than let it cover
-     the view it's supposed to be helping label. */
-  #app.compare #bottom{padding:14px 16px calc(10px + env(safe-area-inset-bottom));gap:8px}
-  #app.compare #modeName{padding:8px 16px;font-size:14px}
-  #app.compare .chip{width:min(42px,13vw);height:min(42px,13vw)}
+  /* The mode picker chooses what the TOP half shows in compare view, but its
+     full-size self ate into the already-halved bottom canvas, and its job is
+     now done by #compareLabelTop/#compareLabelBottom instead. Hidden rather
+     than shrunk — switching mode mid-compare still works via swipe (see the
+     drag handler), just without the picker's chips on screen for it. */
+  #app.compare #bottom{display:none}
   #modeName{padding:13px 24px;border-radius:999px;font:700 18px/1 var(--sans);letter-spacing:-.01em;
             white-space:nowrap;background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
   #modes{display:flex;align-items:center;gap:12px;pointer-events:auto}
@@ -243,7 +249,9 @@
 <body>
 <div id="app">
   <canvas id="gl"></canvas>
-  <video id="vidCompare" playsinline muted autoplay></video>
+  <canvas id="glRaw"></canvas>
+  <div id="compareLabelTop" data-chrome>Z's mode</div>
+  <div id="compareLabelBottom" data-chrome>Standard</div>
   <div id="vignette"></div>
 
   <div id="top" data-chrome>

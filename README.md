@@ -49,6 +49,13 @@ selected mode on top and the raw camera below it, live, instead of switching
 between them — for holding a screen up next to what everyone else already
 sees.
 
+**Double-tap** the screen to step brightness: 1× → 1.5× → 2× → back to 1×.
+More light genuinely helps a deutan's signal-to-noise limited cone
+discrimination (see [SCIENCE.md](SCIENCE.md)) — the same reason colour-blind
+glasses only work outdoors. Does nothing for a photophobic profile
+(achromatopsia, blue cone monochromacy), where a brighter screen is a real
+harm, not a help.
+
 ## Colour naming
 
 The pill under the centre reticle names whatever the reticle is on, sampled
