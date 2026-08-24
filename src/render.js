@@ -116,7 +116,11 @@ vec3 guardHue(vec3 o, vec3 ref, float capDeg){
   // case rather than the unguarded (possibly over-cap) input.
   float loT = 0.0, hiT = co;
   vec3 best = mapToGamut(fromLab(vec3(lo.x, 0.0, 0.0)));
-  for (int i = 0; i < 12; i++) {
+  // 6 halvings resolve chroma to 1/64 of its starting value — far below any
+  // perceptual threshold, and this runs per-pixel on a phone GPU. 12 was
+  // needlessly precise and measurably expensive: pulse calls guardHue twice,
+  // so the loop cost doubles in the mode that is now the default.
+  for (int i = 0; i < 6; i++) {
     float mid = (loT + hiT) * 0.5;
     vec3 cand = mapToGamut(fromLab(vec3(lo.x, dir * mid)));
     vec3 lc = toLab(cand);
@@ -225,8 +229,11 @@ vec3 errOf(vec3 lin){ return (lin - simulateFull(lin)) * ${k.toFixed(6)}; }
 // Fitted to the frame, not to constants chosen in advance. uFit carries the
 // result of adapt.js optimising against this frame's own palette; the taper in
 // errOf and the hue cap below are unchanged.
-vec3 natural(vec3 lin){
-  vec3 err = errOf(lin);
+// Takes err precomputed so pulse() (the default mode) can share one errOf
+// call across the gate, the split shift, and this — errOf is a full
+// simulateFull matrix pass, and paying for it three times per pixel showed
+// up as dropped frames on a real phone.
+vec3 naturalWith(vec3 lin, vec3 err){
   float d = dot(err, LOST);
   vec3 f = ${glslMat(shift)} * err;
   float Y = dot(lin, LUMA);
@@ -236,6 +243,7 @@ vec3 natural(vec3 lin){
   o = vec3(Y2) + (o - vec3(Y2)) * (1.0 + uFit.w * uBoost);
   return guardHue(mapToGamut(o), lin, ${P.hueCapDeg.toFixed(1)});
 }
+vec3 natural(vec3 lin){ return naturalWith(lin, errOf(lin)); }
 
 // Hue and chroma untouched; the lost signal becomes lighter/darker only.
 vec3 achromatic(vec3 lin){
@@ -257,11 +265,20 @@ vec3 split(vec3 lin){
 // Chroma-only breathing between natural and split, on pixels that actually
 // carry lost information. Luminance is pinned to natural's value, so the
 // screen never strobes; the rate is baked below the photosensitive band.
+//
+// This is the default mode's shader, so per-pixel cost is not academic:
+// compute errOf ONCE and reuse it for the gate and for split's shift,
+// rather than recomputing it (a full simulateFull matrix pass) two more
+// times. Gate first, before natural(), so a pixel carrying no lost
+// information skips the pulse path entirely instead of paying for it and
+// then discarding the result.
 vec3 pulse(vec3 lin){
-  vec3 a = natural(lin);
-  float gate = clamp((length(errOf(lin)) - ${P.pulseGate.toFixed(4)}) / ${P.pulseGate.toFixed(4)}, 0.0, 1.0);
+  vec3 err = errOf(lin);
+  float gate = clamp((length(err) - ${P.pulseGate.toFixed(4)}) / ${P.pulseGate.toFixed(4)}, 0.0, 1.0);
+  vec3 a = naturalWith(lin, err);
   if (gate <= 0.0) return a;
-  vec3 b = withLuma(split(lin), dot(a, LUMA));
+  vec3 sft = ${glslMat(shift)} * err;
+  vec3 b = withLuma(mapToGamut(lin + sft * (0.5 + uBoost)), dot(a, LUMA));
   float w = 0.5 * (1.0 - cos(2.0 * PI * ${Math.min(P.pulseHz, 1.5).toFixed(3)} * uTime)) * gate;
   return guardHue(mapToGamut(mix(a, b, w)), lin, ${P.pulseHueCapDeg.toFixed(1)});
 }

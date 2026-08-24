@@ -43,8 +43,11 @@ console.log("\nPulse safety is baked in, not left to the caller:");
   ok(`pulse rate ${hz}Hz is at or below 1.5`, hz <= 1.5);
   ok("pulse is far below the 3-30Hz photosensitive band", hz < 3);
   // Luminance is pinned to natural's before crossfading, so the screen cannot
-  // strobe — only chroma moves.
-  ok("pulse crossfades at constant luminance", /withLuma\(split\(lin\), dot\(a, LUMA\)\)/.test(src));
+  // strobe — only chroma moves. What matters is that the pulse TARGET is
+  // forced to natural's luminance (dot(a, LUMA)) before the mix, however that
+  // target is spelled — split() was inlined into pulse() to share one errOf
+  // call, so this checks the property rather than one spelling of it.
+  ok("pulse crossfades at constant luminance", /withLuma\([^;]*,\s*dot\(a, LUMA\)\)/.test(src));
   ok("pulse is gated to pixels carrying lost information", src.includes("gate"));
   ok("pulse hue cap present", src.includes(DEFAULTS.pulseHueCapDeg.toFixed(1)));
   ok("natural hue cap present", src.includes(DEFAULTS.hueCapDeg.toFixed(1)));
