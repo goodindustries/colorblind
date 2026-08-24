@@ -375,7 +375,13 @@ export function createRenderer(canvas) {
     /** Per-frame fit from adapt.js: {kL, kC, kF, sat}. */
     setFit(f) { state.fit = { ...state.fit, ...f }; },
 
-    resize(dpr = Math.min(devicePixelRatio || 1, 2)) {
+    // DPR capped at 1, not 2. On a 3x iPhone the old cap rendered four times
+    // the pixels of this one, every frame, through a shader that does Lab
+    // round-trips per pixel. Paired with the 1280x720 capture above, this is
+    // the throughput cut for the streaking that survived every rendering-side
+    // fix. The source frames are 720p, so rendering above 1x was upscaling
+    // past the real detail anyway.
+    resize(dpr = 1) {
       const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
       if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
       gl.viewport(0, 0, canvas.width, canvas.height);
@@ -439,8 +445,15 @@ export async function openCamera(video, facing = "environment") {
 
   let stream;
   try {
+    // 1280x720, not 1920x1080. Every rendering path tried so far streaked on
+    // a real iPhone — two different WebGL contexts, a second <video> element,
+    // and a plain 2D drawImage — and the only thing all four share is reading
+    // frames from this stream. That points at throughput at the capture or
+    // compositing layer rather than at anything downstream, so this halves
+    // each axis: a quarter of the pixels per frame, at a resolution still
+    // well above what the correction needs to be legible on a phone screen.
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
     });
   } catch (e) {

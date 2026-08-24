@@ -151,7 +151,7 @@ function refit(now) {
 // <video> element, tried both) streaked on a real iPhone; this doesn't
 // decode anything, it just paints what's already in memory for this frame.
 function drawRaw() {
-  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const dpr = 1;   // matches render.js's resize(); see the note there
   const w = Math.round(glRaw.clientWidth * dpr), h = Math.round(glRaw.clientHeight * dpr);
   if (glRaw.width !== w || glRaw.height !== h) { glRaw.width = w; glRaw.height = h; }
   const vw = vid.videoWidth, vh = vid.videoHeight;
