@@ -56,10 +56,10 @@ const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, co
 let state = Profiles.load();
 let me = Profiles.active(state);
 
-const gl = $("gl"), vid = $("vid"), sampler = $("sampler");
+const gl = $("gl"), glCompare = $("glCompare"), vid = $("vid"), sampler = $("sampler");
 const sctx = sampler.getContext("2d", { willReadFrequently: true });
 const smooth = makeSmoother(0.4);
-let renderer = null;
+let renderer = null, rendererCompare = null;
 
 // ---------------------------------------------------------------------------
 // Render loop
@@ -78,6 +78,12 @@ function applyProfile() {
   renderer.setBoost(me.boost);
   renderer.setExposure(exposure());
   renderer.setMode(MODES[S.mode].key);
+  if (rendererCompare) {
+    rendererCompare.setProfile(me);
+    rendererCompare.setBoost(me.boost);
+    rendererCompare.setExposure(exposure());
+    rendererCompare.setMode(MODE.NORMAL);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +127,10 @@ function frame() {
   if (S.cam && now - lastFit > 1000 / FIT_HZ) { lastFit = now; refit(now); }
   renderer.setFit(smoothFit(fitTarget, now));
   renderer.draw();
+  if (S.compare && rendererCompare) {
+    rendererCompare.resize();
+    rendererCompare.draw();
+  }
   requestAnimationFrame(frame);
 }
 
@@ -207,19 +217,30 @@ function setMode(i) {
 
 // Split top/bottom rather than left/right — a phone screen is taller than
 // wide, so a horizontal seam keeps each half nearly the full picture instead
-// of cropping it into a narrow strip. Raw camera on top, the corrected mode
-// below, live. The colour-name reticle samples a screen position that only
-// means one thing in a single full-frame view — in compare it would land
-// over whichever half happens to be under 46% height, and the two halves
-// show different pixels for the same screen point. Simplest correct answer
-// is to hide it rather than compute a split-aware reprojection for a feature
-// whose whole point is the visual comparison, not the name pill.
+// of cropping it into a narrow strip. The corrected mode on top, raw camera
+// below, live — two separate canvases (see the #glCompare CSS comment for
+// why: one canvas split per-frame with gl.viewport/gl.scissor streaked on a
+// real iPhone). rendererCompare is created lazily on first use rather than
+// at boot, since most sessions never touch this and a second live WebGL
+// context has a real, if modest, GPU/battery cost.
+//
+// The colour-name reticle samples a screen position that only means one
+// thing in a single full-frame view — in compare the two canvases show
+// different pixels for the same screen point. Simplest correct answer is to
+// hide it rather than compute a split-aware reprojection for a feature whose
+// whole point is the visual comparison, not the name pill.
 function setCompare(on) {
+  if (on && !S.cam) { flash("Turn on the camera first", 1600); return; }
   S.compare = on;
-  renderer.setCompare(on);
+  if (on && !rendererCompare) {
+    rendererCompare = createRenderer(glCompare);
+    if (S.cam) rendererCompare.attach(vid);
+    applyProfile();
+  }
+  $("app").classList.toggle("compare", on);
   $("compare").setAttribute("aria-pressed", String(on));
   $("center").style.display = on ? "none" : "";
-  if (on) flash("Camera on top, corrected below", 1800);
+  if (on) flash("Z's mode on top, camera below", 1800);
 }
 $("compare").addEventListener("click", () => setCompare(!S.compare));
 
@@ -466,6 +487,7 @@ async function startCamera(viaTap) {
     await openCamera(vid, "environment");
     S.cam = true;
     renderer.attach(vid);
+    if (rendererCompare) rendererCompare.attach(vid);
     $("app").classList.add("ready");
     $("gate").classList.add("hidden");
     $("camBtn").textContent = "Camera live";

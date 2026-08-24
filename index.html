@@ -26,6 +26,19 @@
   #gl{position:absolute;inset:0;width:100%;height:100%;display:block;visibility:hidden;
       transform-origin:50% 50%;transition:transform .12s linear}
   #app.ready #gl{visibility:visible}
+
+  /* ---- compare view: two canvases, two WebGL contexts, stacked by CSS
+     rather than one canvas split by gl.viewport/gl.scissor per frame — the
+     split-in-one-canvas version streaked with fine banding across the WHOLE
+     frame on a real iPhone (not just at the seam), which pointed at
+     per-frame viewport changes against a live <video> texture being the
+     actual problem on that GPU/driver rather than anything about the crop
+     math. Each canvas here runs the exact single, unsplit draw() path that
+     already works correctly in normal (non-compare) mode. ---- */
+  #glCompare{position:absolute;left:0;right:0;bottom:0;height:50%;width:100%;display:none;
+             visibility:hidden;border-top:1px solid rgba(255,255,255,.14)}
+  #app.compare #gl{top:0;bottom:50%;height:50%}
+  #app.compare.ready #glCompare{display:block;visibility:visible}
   /* Nothing to point at until the camera is live, so the reticle, readout and
      mode chips stay out of the way rather than describing a blank screen. */
   /* The reticle, readout and mode chips wait for a camera — there is nothing
@@ -69,7 +82,13 @@
   /* ---- bottom chrome ---- */
   #bottom{position:absolute;left:0;right:0;bottom:0;padding:60px 20px calc(30px + env(safe-area-inset-bottom));
           display:flex;flex-direction:column;align-items:center;gap:14px;z-index:20;pointer-events:none;
-          background:linear-gradient(to top,rgba(8,9,11,.8),rgba(8,9,11,0))}
+          background:linear-gradient(to top,rgba(8,9,11,.8),rgba(8,9,11,0));transition:padding .2s,gap .2s}
+  /* Compare halves the screen; the mode picker at full size ate a big chunk
+     of the already-halved bottom canvas. Shrink it rather than let it cover
+     the view it's supposed to be helping label. */
+  #app.compare #bottom{padding:14px 16px calc(10px + env(safe-area-inset-bottom));gap:8px}
+  #app.compare #modeName{padding:8px 16px;font-size:14px}
+  #app.compare .chip{width:min(42px,13vw);height:min(42px,13vw)}
   #modeName{padding:13px 24px;border-radius:999px;font:700 18px/1 var(--sans);letter-spacing:-.01em;
             white-space:nowrap;background:rgba(8,9,11,.55);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
   #modes{display:flex;align-items:center;gap:12px;pointer-events:auto}
@@ -215,6 +234,7 @@
 <body>
 <div id="app">
   <canvas id="gl"></canvas>
+  <canvas id="glCompare"></canvas>
   <div id="vignette"></div>
 
   <div id="top" data-chrome>

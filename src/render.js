@@ -364,15 +364,18 @@ export function createRenderer(canvas) {
       gl.viewport(0, 0, canvas.width, canvas.height);
     },
 
-    setCompare(on) { state.compare = !!on; },
-
     /**
-     * Normally one full-canvas draw at state.mode. In compare view, draws
-     * twice into top/bottom halves at a shared crop (each half's cover-scale
-     * computed against its own aspect ratio, not the full canvas's, or the
-     * image would look stretched) — top is always MODE.NORMAL (the raw
-     * camera), bottom is whatever mode is currently selected. Same texture
-     * upload either way; only the second pass's viewport and uMode differ.
+     * One full-canvas draw at state.mode. Compare view (two mode feeds
+     * stacked on screen) is composed at the DOM layer instead of inside a
+     * single draw — two independent renderer instances, one per canvas, each
+     * running this exact code path. An earlier version split ONE canvas with
+     * gl.viewport/gl.scissor into top/bottom rects per frame; that looked
+     * correct in a desktop/headless check but streaked with fine vertical
+     * banding across the WHOLE frame on a real iPhone — not just at the
+     * seam, which ruled out a scissor/viewport bleed and pointed at multiple
+     * viewport changes per frame against a live <video> texture being the
+     * actual problem on that GPU/driver. Two canvases each doing a single,
+     * unsplit draw sidesteps the pattern entirely rather than chasing it.
      */
     draw() {
       if (!prog || !video) return false;
@@ -385,46 +388,11 @@ export function createRenderer(canvas) {
       gl.uniform1f(loc.uDim, state.dim);
       gl.uniform1f(loc.uTime, (performance.now() - t0) / 1000);
       gl.uniform4f(loc.uFit, state.fit.kL, state.fit.kC, state.fit.kF, state.fit.sat);
-
-      if (!state.compare) {
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        const [sx, sy] = coverScale();
-        gl.uniform2f(loc.uScale, sx, sy);
-        gl.uniform1i(loc.uMode, state.mode);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        return true;
-      }
-
-      // Viewport alone remaps clip space to a pixel rectangle, but does not
-      // stop a fragment shader from writing outside it if anything about the
-      // draw disagrees with that rectangle — scissor is the actual clip.
-      // Without it this streaked on a real phone (each half bled into the
-      // other) despite looking correct in a desktop/headless check.
-      gl.enable(gl.SCISSOR_TEST);
-
-      // Top/bottom rather than left/right: a phone screen is taller than
-      // wide, so a vertical seam leaves each half nearly as narrow as the
-      // whole picture was, while a horizontal seam keeps the full width and
-      // only halves the height — closer to how the picture actually reads.
-      // GL's y=0 is the bottom of the canvas, not the top, so raw camera
-      // (screen-top, "before") is the SECOND viewport/scissor call at
-      // y=halfH, and the correction (screen-bottom, "after") is the first.
-      const halfH = Math.round(canvas.height / 2);
-      const [sxB, syB] = coverScale(canvas.width, halfH);
-      gl.viewport(0, 0, canvas.width, halfH);
-      gl.scissor(0, 0, canvas.width, halfH);
-      gl.uniform2f(loc.uScale, sxB, syB);
-      gl.uniform1i(loc.uMode, state.mode === MODE.NORMAL ? MODE.NATURAL : state.mode);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      const [sx, sy] = coverScale();
+      gl.uniform2f(loc.uScale, sx, sy);
+      gl.uniform1i(loc.uMode, state.mode);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-      const [sxT, syT] = coverScale(canvas.width, canvas.height - halfH);
-      gl.viewport(0, halfH, canvas.width, canvas.height - halfH);
-      gl.scissor(0, halfH, canvas.width, canvas.height - halfH);
-      gl.uniform2f(loc.uScale, sxT, syT);
-      gl.uniform1i(loc.uMode, MODE.NORMAL);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
-      gl.disable(gl.SCISSOR_TEST);
       return true;
     },
 
