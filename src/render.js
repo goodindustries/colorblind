@@ -395,18 +395,29 @@ export function createRenderer(canvas) {
         return true;
       }
 
+      // Viewport alone remaps clip space to a pixel rectangle, but does not
+      // stop a fragment shader from writing outside it if anything about the
+      // draw disagrees with that rectangle — scissor is the actual clip.
+      // Without it this streaked on a real phone (each half bled into the
+      // other) despite looking correct in a desktop/headless check.
+      gl.enable(gl.SCISSOR_TEST);
+
       const halfW = Math.round(canvas.width / 2);
       const [sxL, syL] = coverScale(halfW, canvas.height);
       gl.viewport(0, 0, halfW, canvas.height);
+      gl.scissor(0, 0, halfW, canvas.height);
       gl.uniform2f(loc.uScale, sxL, syL);
       gl.uniform1i(loc.uMode, MODE.NORMAL);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
       const [sxR, syR] = coverScale(canvas.width - halfW, canvas.height);
       gl.viewport(halfW, 0, canvas.width - halfW, canvas.height);
+      gl.scissor(halfW, 0, canvas.width - halfW, canvas.height);
       gl.uniform2f(loc.uScale, sxR, syR);
       gl.uniform1i(loc.uMode, state.mode === MODE.NORMAL ? MODE.NATURAL : state.mode);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+      gl.disable(gl.SCISSOR_TEST);
       return true;
     },
 
