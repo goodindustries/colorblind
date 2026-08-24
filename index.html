@@ -27,18 +27,27 @@
       transform-origin:50% 50%;transition:transform .12s linear}
   #app.ready #gl{visibility:visible}
 
-  /* ---- compare view: two canvases, two WebGL contexts, stacked by CSS
-     rather than one canvas split by gl.viewport/gl.scissor per frame — the
-     split-in-one-canvas version streaked with fine banding across the WHOLE
-     frame on a real iPhone (not just at the seam), which pointed at
-     per-frame viewport changes against a live <video> texture being the
-     actual problem on that GPU/driver rather than anything about the crop
-     math. Each canvas here runs the exact single, unsplit draw() path that
-     already works correctly in normal (non-compare) mode. ---- */
-  #glCompare{position:absolute;left:0;right:0;bottom:0;height:50%;width:100%;display:none;
-             visibility:hidden;border-top:1px solid rgba(255,255,255,.14)}
+  /* ---- compare view ----
+     Two attempts at the bottom half both streaked on a real iPhone: first a
+     single canvas split per-frame with gl.viewport/gl.scissor, then two
+     separate canvases each with their own WebGL context. The second attempt
+     still streaking — on BOTH halves, not just the seam — ruled out anything
+     about splitting or scissoring and pointed at the real cause: two live
+     WebGL contexts drawing every frame is a known-fragile pattern on mobile
+     Safari (shared GPU context budget across contexts), not something this
+     app's shader math controls.
+     So the bottom half carries no WebGL at all. It is the actual <video>
+     element showing the actual camera feed natively — the browser's own
+     video compositor, zero shader, zero second GL context. Only one thing
+     in this feature touches WebGL: #gl, exactly as it already does outside
+     compare mode. object-fit:cover reproduces the cover-crop the shader
+     path computes manually. (No mirror handling needed — this app only ever
+     opens the back/"environment" camera; setMirror exists in render.js but
+     nothing in app.js ever calls it.) */
+  #vidCompare{position:absolute;left:0;right:0;bottom:0;height:50%;width:100%;display:none;
+              object-fit:cover;border-top:1px solid rgba(255,255,255,.14)}
   #app.compare #gl{top:0;bottom:50%;height:50%}
-  #app.compare.ready #glCompare{display:block;visibility:visible}
+  #app.compare.ready #vidCompare{display:block}
   /* Nothing to point at until the camera is live, so the reticle, readout and
      mode chips stay out of the way rather than describing a blank screen. */
   /* The reticle, readout and mode chips wait for a camera — there is nothing
@@ -234,7 +243,7 @@
 <body>
 <div id="app">
   <canvas id="gl"></canvas>
-  <canvas id="glCompare"></canvas>
+  <video id="vidCompare" playsinline muted autoplay></video>
   <div id="vignette"></div>
 
   <div id="top" data-chrome>

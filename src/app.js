@@ -56,10 +56,10 @@ const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, co
 let state = Profiles.load();
 let me = Profiles.active(state);
 
-const gl = $("gl"), glCompare = $("glCompare"), vid = $("vid"), sampler = $("sampler");
+const gl = $("gl"), vidCompare = $("vidCompare"), vid = $("vid"), sampler = $("sampler");
 const sctx = sampler.getContext("2d", { willReadFrequently: true });
 const smooth = makeSmoother(0.4);
-let renderer = null, rendererCompare = null;
+let renderer = null;
 
 // ---------------------------------------------------------------------------
 // Render loop
@@ -78,12 +78,6 @@ function applyProfile() {
   renderer.setBoost(me.boost);
   renderer.setExposure(exposure());
   renderer.setMode(MODES[S.mode].key);
-  if (rendererCompare) {
-    rendererCompare.setProfile(me);
-    rendererCompare.setBoost(me.boost);
-    rendererCompare.setExposure(exposure());
-    rendererCompare.setMode(MODE.NORMAL);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +121,6 @@ function frame() {
   if (S.cam && now - lastFit > 1000 / FIT_HZ) { lastFit = now; refit(now); }
   renderer.setFit(smoothFit(fitTarget, now));
   renderer.draw();
-  if (S.compare && rendererCompare) {
-    rendererCompare.resize();
-    rendererCompare.draw();
-  }
   requestAnimationFrame(frame);
 }
 
@@ -217,26 +207,22 @@ function setMode(i) {
 
 // Split top/bottom rather than left/right — a phone screen is taller than
 // wide, so a horizontal seam keeps each half nearly the full picture instead
-// of cropping it into a narrow strip. The corrected mode on top, raw camera
-// below, live — two separate canvases (see the #glCompare CSS comment for
-// why: one canvas split per-frame with gl.viewport/gl.scissor streaked on a
-// real iPhone). rendererCompare is created lazily on first use rather than
-// at boot, since most sessions never touch this and a second live WebGL
-// context has a real, if modest, GPU/battery cost.
+// of cropping it into a narrow strip. The corrected mode on top (the live
+// WebGL canvas, unchanged), raw camera below — see the #vidCompare CSS
+// comment for why that half is a plain <video> and not a second WebGL draw:
+// two live GL contexts drawing every frame streaked on a real iPhone even
+// once split into two fully independent canvases, which is a known-fragile
+// pattern on mobile Safari, not something fixable from this app's shader
+// math. A <video> element costs no GPU context at all.
 //
 // The colour-name reticle samples a screen position that only means one
-// thing in a single full-frame view — in compare the two canvases show
+// thing in a single full-frame view — in compare the two halves show
 // different pixels for the same screen point. Simplest correct answer is to
 // hide it rather than compute a split-aware reprojection for a feature whose
 // whole point is the visual comparison, not the name pill.
 function setCompare(on) {
   if (on && !S.cam) { flash("Turn on the camera first", 1600); return; }
   S.compare = on;
-  if (on && !rendererCompare) {
-    rendererCompare = createRenderer(glCompare);
-    if (S.cam) rendererCompare.attach(vid);
-    applyProfile();
-  }
   $("app").classList.toggle("compare", on);
   $("compare").setAttribute("aria-pressed", String(on));
   $("center").style.display = on ? "none" : "";
@@ -484,10 +470,15 @@ const showGate = (title, body, label, diag) => {
  */
 async function startCamera(viaTap) {
   try {
-    await openCamera(vid, "environment");
+    const stream = await openCamera(vid, "environment");
     S.cam = true;
     renderer.attach(vid);
-    if (rendererCompare) rendererCompare.attach(vid);
+    // Compare view's bottom half is the actual <video> element playing the
+    // SAME stream, not a second WebGL draw of it — see the #vidCompare CSS
+    // comment for why. Two elements can each hold their own reference to one
+    // MediaStream with no extra getUserMedia() call and no extra GPU context.
+    vidCompare.srcObject = stream;
+    vidCompare.play?.().catch(() => {});
     $("app").classList.add("ready");
     $("gate").classList.add("hidden");
     $("camBtn").textContent = "Camera live";
