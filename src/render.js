@@ -368,10 +368,10 @@ export function createRenderer(canvas) {
 
     /**
      * Normally one full-canvas draw at state.mode. In compare view, draws
-     * twice into left/right halves at a shared crop (each half's cover-scale
+     * twice into top/bottom halves at a shared crop (each half's cover-scale
      * computed against its own aspect ratio, not the full canvas's, or the
-     * image would look stretched) — left is always MODE.NORMAL (the raw
-     * camera), right is whatever mode is currently selected. Same texture
+     * image would look stretched) — top is always MODE.NORMAL (the raw
+     * camera), bottom is whatever mode is currently selected. Same texture
      * upload either way; only the second pass's viewport and uMode differ.
      */
     draw() {
@@ -402,19 +402,26 @@ export function createRenderer(canvas) {
       // other) despite looking correct in a desktop/headless check.
       gl.enable(gl.SCISSOR_TEST);
 
-      const halfW = Math.round(canvas.width / 2);
-      const [sxL, syL] = coverScale(halfW, canvas.height);
-      gl.viewport(0, 0, halfW, canvas.height);
-      gl.scissor(0, 0, halfW, canvas.height);
-      gl.uniform2f(loc.uScale, sxL, syL);
-      gl.uniform1i(loc.uMode, MODE.NORMAL);
+      // Top/bottom rather than left/right: a phone screen is taller than
+      // wide, so a vertical seam leaves each half nearly as narrow as the
+      // whole picture was, while a horizontal seam keeps the full width and
+      // only halves the height — closer to how the picture actually reads.
+      // GL's y=0 is the bottom of the canvas, not the top, so raw camera
+      // (screen-top, "before") is the SECOND viewport/scissor call at
+      // y=halfH, and the correction (screen-bottom, "after") is the first.
+      const halfH = Math.round(canvas.height / 2);
+      const [sxB, syB] = coverScale(canvas.width, halfH);
+      gl.viewport(0, 0, canvas.width, halfH);
+      gl.scissor(0, 0, canvas.width, halfH);
+      gl.uniform2f(loc.uScale, sxB, syB);
+      gl.uniform1i(loc.uMode, state.mode === MODE.NORMAL ? MODE.NATURAL : state.mode);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-      const [sxR, syR] = coverScale(canvas.width - halfW, canvas.height);
-      gl.viewport(halfW, 0, canvas.width - halfW, canvas.height);
-      gl.scissor(halfW, 0, canvas.width - halfW, canvas.height);
-      gl.uniform2f(loc.uScale, sxR, syR);
-      gl.uniform1i(loc.uMode, state.mode === MODE.NORMAL ? MODE.NATURAL : state.mode);
+      const [sxT, syT] = coverScale(canvas.width, canvas.height - halfH);
+      gl.viewport(0, halfH, canvas.width, canvas.height - halfH);
+      gl.scissor(0, halfH, canvas.width, canvas.height - halfH);
+      gl.uniform2f(loc.uScale, sxT, syT);
+      gl.uniform1i(loc.uMode, MODE.NORMAL);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
       gl.disable(gl.SCISSOR_TEST);

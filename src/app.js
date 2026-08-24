@@ -205,19 +205,21 @@ function setMode(i) {
   flash(MODES[S.mode].sub, 1800);
 }
 
-// Side-by-side: raw camera on the left, the corrected mode on the right, live.
-// The colour-name reticle samples a screen position that only means one thing
-// in a single full-frame view — in compare it would land over whichever half
-// happens to be under 46% height, and the two halves show different pixels
-// for the same screen point. Simplest correct answer is to hide it rather
-// than compute a split-aware reprojection for a feature whose whole point is
-// the visual comparison, not the name pill.
+// Split top/bottom rather than left/right — a phone screen is taller than
+// wide, so a horizontal seam keeps each half nearly the full picture instead
+// of cropping it into a narrow strip. Raw camera on top, the corrected mode
+// below, live. The colour-name reticle samples a screen position that only
+// means one thing in a single full-frame view — in compare it would land
+// over whichever half happens to be under 46% height, and the two halves
+// show different pixels for the same screen point. Simplest correct answer
+// is to hide it rather than compute a split-aware reprojection for a feature
+// whose whole point is the visual comparison, not the name pill.
 function setCompare(on) {
   S.compare = on;
   renderer.setCompare(on);
   $("compare").setAttribute("aria-pressed", String(on));
   $("center").style.display = on ? "none" : "";
-  if (on) flash("Camera on the left, corrected on the right", 1800);
+  if (on) flash("Camera on top, corrected below", 1800);
 }
 $("compare").addEventListener("click", () => setCompare(!S.compare));
 
