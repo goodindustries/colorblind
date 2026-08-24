@@ -37,13 +37,26 @@ const BG = ["#f5a623", "#2f9bf0", "#f2e327", "#1b2a6b", "#d2b48c", "#22c8d8"];
 //   Z      — what their eyes actually receive, for showing other people.
 //   camera — the untouched sensor feed.
 //
-// The engine also carries a zero-hue-error brightness mode and a false-colour
-// mode; both are tested and reachable, just not on screen. Three chips is the
-// whole interface on purpose.
+// The engine also carries a zero-hue-error brightness mode; tested and
+// reachable, just not on screen. Three chips is the whole interface on
+// purpose — World is the experiment slot, so what World actually renders is
+// allowed to change as better mechanisms get proven, without growing the
+// picker.
+//
+// Currently: pulse, not plain natural. Static colour-push (natural) already
+// runs inside pulse — see correct.js's pulse() — and pulse adds a second,
+// independent channel on top: a slow chroma-only breathing between natural
+// and the aggressive split correction, gated to fire ONLY on pixels that
+// still carry real unresolved confusion after natural's push. Motion is a
+// channel the brain reads independent of colour; a red/green pair that
+// still reads as one hue after natural's static push can still separate if
+// one member visibly pulses and the other doesn't. Rate is baked <=1.5Hz,
+// luminance held exactly constant — see correct.js/render.js's own comments
+// for the photosensitivity and flicker-fusion bounds this respects.
 const MODES = [
-  { key: MODE.NATURAL,  icon: "world",
-    name: () => "The world's colours",
-    sub:  "Changed so your eyes see them closer to how everyone else does." },
+  { key: MODE.PULSE,  icon: "world",
+    name: () => "🌈 Rainbow mode",
+    sub:  "The most colour we can get to you — changed so more of it comes through." },
   { key: MODE.SIMULATE, icon: "who",
     name: (n) => `How ${n} sees it`,
     sub:  "What their eyes actually receive. Show this to other people." },
@@ -52,7 +65,8 @@ const MODES = [
     sub:  "The picture untouched." },
 ];
 
-const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, compare: false, brightness: 1 };
+const S = { mode: 0, zoom: 1, sheet: false, rgb: [128, 128, 128], cam: false, compare: false, brightness: 1, rampStartAt: 0 };
+const RAMP_MS = 10000;
 let state = Profiles.load();
 let me = Profiles.active(state);
 
@@ -83,6 +97,13 @@ function exposure() {
 
 function applyProfile() {
   renderer.setProfile(me);
+  // A profile change mid-ramp (persist() fires on every settings edit, calls
+  // this) would otherwise be overwritten right back down by the next frame's
+  // rampedBoost() — the ramp winning every tick until it finishes would make
+  // a manual strength adjustment silently not stick. Cancel the ramp instead:
+  // once someone has touched settings, showing them the value they set is
+  // more correct than continuing to ease toward whatever it used to be.
+  S.rampStartAt = 0;
   renderer.setBoost(me.boost);
   renderer.setExposure(exposure());
   renderer.setMode(MODES[S.mode].key);
@@ -141,11 +162,27 @@ function drawRaw() {
   rawCtx.drawImage(vid, (w - dw) / 2, (h - dh) / 2, dw, dh);
 }
 
+// The first thing a newly-opened camera shows is the untouched picture, not
+// the full correction — so the correction reads as a change happening to
+// something you just saw, not an arbitrary starting look you have no
+// baseline for. Strength eases 0 -> the profile's real boost over 10s;
+// Rainbow mode (and whichever mode is actually selected) is live the whole
+// time, only its intensity ramps. Ease-out (1 - (1-t)^2) so most of the
+// change is front-loaded and the last second is barely perceptible, rather
+// than a linear ramp that still looks like it's visibly moving at the end.
+function rampedBoost(now) {
+  if (!S.rampStartAt) return me.boost;
+  const t = Math.min(1, (now - S.rampStartAt) / RAMP_MS);
+  if (t >= 1) { S.rampStartAt = 0; return me.boost; }
+  return me.boost * (1 - (1 - t) * (1 - t));
+}
+
 function frame() {
   renderer.resize();
   const now = performance.now();
   if (S.cam && now - lastFit > 1000 / FIT_HZ) { lastFit = now; refit(now); }
   renderer.setFit(smoothFit(fitTarget, now));
+  if (S.rampStartAt) renderer.setBoost(rampedBoost(now));
   renderer.draw();
   if (S.compare) drawRaw();
   requestAnimationFrame(frame);
@@ -522,6 +559,7 @@ async function startCamera(viaTap) {
     await openCamera(vid, "environment");
     S.cam = true;
     renderer.attach(vid);
+    S.rampStartAt = performance.now();
     $("app").classList.add("ready");
     $("gate").classList.add("hidden");
     $("camBtn").textContent = "Camera live";

@@ -31,12 +31,20 @@ The cost: it only works inside the frame on the screen, not in the world.
 
 ## Modes
 
-| Mode | What it does |
+Three chips, on purpose:
+
+| Chip | What it does |
 |---|---|
-| **Off** | Untouched camera feed, for comparison |
-| **Daltonize** | Simulates deutan cone response, measures the lost red-green signal, re-injects it on the blue-yellow axis. Colours stay broadly natural |
-| **Split** | Drives that same lost axis hard. Colours stop being true, but confusion pairs separate unmistakably — reds go warm/bright, greens go cool/blue |
-| **Simulate** | Renders what a deutan retina actually receives. Useful for showing other people what you see |
+| **🌈 Rainbow mode** (default) | Simulates the lost cone response, measures the lost signal, re-injects it as a colour push fitted to what the camera is pointed at right now (`src/adapt.js`), plus a slow chroma pulse on pixels that still carry unresolved confusion after that push — motion is a channel the brain reads independent of colour, so a pair that still reads as one hue can still separate if one member visibly breathes and the other doesn't. Rate ≤1.5Hz, luminance held exactly constant, both well outside the photosensitive band. The most colour this app can get to you — the closest thing here to "full colour" |
+| **How they see it** | Renders what the calibrated eye actually receives. Useful for showing other people |
+| **Camera** | Untouched sensor feed, for comparison |
+
+The engine also has a Fidaner-redistribution split mode (colours stop being
+true, but confusion pairs separate unmistakably) and a zero-hue-error
+brightness-only mode; both are tested and reachable in code, just not wired
+to a chip — Rainbow mode is where experiments land as they're proven out,
+so what it renders is allowed to change without growing the picker past
+three.
 
 **Severity** slider selects the deuteranomaly simulation matrix (0 = normal
 trichromat, 1.0 = full deuteranope). A "Strong Deutan" test result sits
